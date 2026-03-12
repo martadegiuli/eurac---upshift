@@ -1,0 +1,2184 @@
+---
+title: "UPSHIFT_2025 - Initial Plots"
+author: "Marta De Giuli"
+format: html
+editor: visual
+---
+
+# Data description
+
+## Data Source
+
+The data used in this exercise was taken from: A experiment run in the TerraX Cube hypobaric chambers in Bolzano, IT in November 2025 on *Arabidopsis thaliana* individuals. Data collected by Marta De Giuli, Bouchra El Omari, and Emily Mason and compiled by Marta De Giuli in 2026.
+
+## Description of the data
+
+Description of the data and the question(s).
+
+-   4 chambers for a 2 factorial design :
+    -   2 pairs at the same elevation/pressure
+    -   2 pairs at the same D/pressure corrected VPD
+-   In each chamber we have 30 pots each containing 3-4 individuals, kept at 100% soil saturation.
+-   We have a total of 120 pots across all chambers.
+-   We have temporal data for some measures - taken halfway through the experiment and taken at the end, while other measures only have one temporal point taken at the end of the two week experimental conditions.
+-   Our main goal is to understand *how* or *if* pressure modulates ecophysiological parameters of *Arabidopsis thaliana* and how pressure interracts with humidity. The goal of this is to disentangle the effect of pressure and humidity to better understand the stressors high alpine plants are subjected to.
+
+Covariates:
+
+-   Biometric measurements including:
+
+    -   plant height, rosette diameter and leaf number
+    -   fresh weight, turgid weight, dry weight, and calculated RWC
+
+-   Photosynthetic measurements, as taken with a WALZ device:
+
+    -   Net carbon assimilation, gas exchange (stomatal conductance), evapotranspiration
+    -   and calculated: Ci:Ca
+
+-   Chlorophyll fluorescence measurements, as taken with a FluorCAM 600 from leaf discs:
+
+    -   Y(II), NPQ, 1-qL
+
+-   Metabolitic measurements
+
+    -   C:N ratios, d13C values
+
+    -   chlorophyll content, carotene content, chlorophyll a:b ratio
+
+# Code
+
+```{r}
+#| label: Libraries
+#| include: false
+#load libraries
+
+#Libraries----
+library(readxl)
+library(tidyverse)
+library(ggpubr)
+library(agricolae)
+library(multcompView)
+#Bolstad B (2024). preprocessCore: A collection of pre-processing functions. R package version 1.66.0, https://github.com/bmbolstad/preprocessCore.
+library(preprocessCore)
+library(pgirmess)
+library(PMCMRplus)
+library(MASS)
+library(rcompanion)
+library(broom)
+library(photosynthesis)
+library(minpack.lm)
+library(sjstats)
+library(insight)
+library(nlme)
+library(multcomp)
+library(nlraa)
+library(import)
+```
+
+```{r}
+#| label: Functions
+#| include: false
+#create function for calculation of standard deviation, standard error, 95% confidence interval
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+  library(plyr)
+  
+  # New version of length which can handle NA's: if na.rm==T, don't count them
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+  }
+  
+  # This does the summary. For each group's data frame, return a vector with
+  # N, mean, and sd
+  datac <- ddply(data, groupvars, .drop=.drop,
+                 .fun = function(xx, col) {
+                   c(N    = length2(xx[[col]], na.rm=na.rm),
+                     mean = mean   (xx[[col]], na.rm=na.rm),
+                     sd   = sd     (xx[[col]], na.rm=na.rm)
+                   )
+                 },
+                 measurevar
+  )
+  
+  # Rename the "mean" column    
+  datac <- rename(datac, c("mean" = measurevar))
+  
+  datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+  
+  # Confidence interval multiplier for standard error
+  # Calculate t-statistic for confidence interval: 
+  # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+  ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+  datac$ci <- datac$se * ciMult
+  
+  return(datac)
+}
+
+# Self-starting function for the exponential decay model
+SSexpDecay <- selfStart(
+  model = ~ Pmin + Pmax * exp(-alpha * I / Pmax),
+  initial = function(mCall, data, LHS, ...) {
+    # Extract the independent variable and the response variable
+    xy <- sortedXyData(mCall[["I"]], LHS, data)
+    
+    # Ensure there are enough data points
+    if (nrow(xy) < 4) stop("bro you don't have enough values")
+    
+    #extract indep + response variables
+    I <- xy[["x"]]
+    y <- xy[["y"]]
+    
+    # Initial guess for Pmax is the maximum observed value of y
+    Pmax_init <- max(y)
+    Pmin_init <- min(y)
+    
+    # Fit a linear model to the log-transformed data to estimate alpha
+    # Avoid log(0) by replacing 0s with a small positive value
+    y_transformed <- ifelse(y == 0, 1e-6, y)
+    log_y <- log(y_transformed)
+    
+    # Linear model: log(y) =log(Pmin)+ log(Pmax) - (alpha / Pmax) * I
+    fit <- lm(log_y ~ I)
+    alpha_init <- -coef(fit)[2] * Pmax_init  # Extract alpha from the slope
+    
+    # Return the initial parameter estimates as a named list
+    setNames(c(Pmax = Pmax_init, alpha = alpha_init, Pmin = Pmin_init), 
+             mCall[c("Pmax", "alpha", "Pmin")])
+  },
+  parameters = c("Pmax", "alpha", "Pmin")
+)
+
+# Function to create compact letter displays
+create_cld <- function(subset_data) {
+  # Extract group comparisons and p-values
+  comparisons <- strsplit(as.character(subset_data$pairs), "-")       #extract pairs
+  groups <- unique(unlist(comparisons))                               #extract unique treatments
+  p_matrix <- matrix(1, nrow = length(groups), ncol = length(groups)) #create square matrix with for treatment comparisons
+  #rename the rows and columns to treatment names
+  rownames(p_matrix) <- groups
+  colnames(p_matrix) <- groups
+  
+  #for each comparison (saved in 'comparisons'), save p-value in matrix)
+  for (i in 1:nrow(subset_data)) {
+    pair <- comparisons[[i]]
+    p_matrix[pair[1], pair[2]] <- subset_data$p_value[i]
+    p_matrix[pair[2], pair[1]] <- subset_data$p_value[i]
+  }
+  
+  # Create compact letter display
+  cld <- multcompLetters(p_matrix)
+  return(cld$Letters)
+}
+
+# Function to check overlap between two confidence intervals
+check_overlap <- function(ci1, ci2) {
+  !(ci1[2] < ci2[1] | ci2[2] < ci1[1])
+}
+
+# Pairwise comparison of confidence intervals
+compare_param <- function(data) {
+  comparisons <- data.frame(
+    pair = character(),
+    overlap = logical(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (i in 1:(nrow(data) - 1)) {
+    for (j in (i + 1):nrow(data)) {
+      pair_name <- paste(data$treatment[i], data$treatment[j], sep = "-")
+      overlap <- check_overlap(
+        ci1 = c(data$low[i], data$high[i]),
+        ci2 = c(data$low[j], data$high[j])
+      )
+      comparisons <- rbind(comparisons, data.frame(pair = pair_name, overlap = overlap))
+    }
+  }
+  
+  return(comparisons)
+}
+
+# Compare coefficients of non-nested models as per Clogg et al. (1995) formula
+# returns a data.frame with the diff, zdiff, and p.value of each coefficient
+
+compare_coefs <- function(.data1, .data2){
+  
+  # imports map_dbl() and pluck() functions from purrr library
+  import::here(map_dbl, pluck, .from = purrr)  
+  
+  # extract the relevant data
+  b1 = map_dbl(df1[, 1], pluck)     #get reg. coefs for model 1
+  se1 = map_dbl(df1[, 2], pluck)    #get std errors for model 1
+  
+  b2 = map_dbl(df2[, 1], pluck)     #get reg. coefs for model 2
+  se2 = map_dbl(df2[, 2], pluck)    #get std. errors for model 2
+  
+  # Clogg et al. (1995) formula as cited by Ray Paternoster et al. (1998)
+  b = b1 - b2
+  s1 = se1^2
+  s2 = se2^2
+  sc = s1 + s2
+  v = b / sqrt(sc)
+  
+  data.frame(diff=b, zdiff=v, `p-value`=format(2*pnorm(-abs(v)), scientific=FALSE))
+  
+}
+```
+
+## Importing Data
+
+```{r}
+#| label: Importing Data
+#| include: false
+
+# growth parameters ----
+
+biomass <- read_excel("../Raw Data/upshift25_biometrics.xlsx",
+                      sheet= "RWC",
+                      range = cell_cols("B:G")) |>
+  mutate(treatment = substr(ID, 1, 5),
+         D         = substr(ID, 4, 5),
+         pressure  = case_when(
+           substr(ID, 1, 2) == 26 ~ 98,
+           substr(ID, 1, 2) == 40 ~ 61),
+         drought   = ifelse(substr(ID, 9, 9) == "d", "d", "nd")
+  )
+
+biometric <- read_excel("../Raw Data/upshift25_biometrics.xlsx",
+                        sheet = "biometrics") |>
+  mutate(treatment = substr(ID, 1, 5),
+         D         = substr(ID, 4, 5),
+         pressure  = case_when(
+           substr(ID, 1, 2) == 26 ~ 98,
+           substr(ID, 1, 2) == 40 ~ 61),
+         drought   = ifelse(substr(ID, 9, 9) == "d", "d", "nd")
+  )
+
+## WALZ data ----
+
+walz <- read_excel ("../Raw Data/photosynthesis_cal_2025.xlsx")|>
+  dplyr::select(Date, Elevation, D, Drought, Tleaf, E, VPD, GH2O, A, ci, ca) |>  #select only columns that we need: leaf temp, evapotranspiration, VPD, Gas exchange, Absorbance, internal and external co2 concentration
+  mutate(cica = abs(ci) / abs(ca),
+         Tleaf = as.numeric(Tleaf),
+         pressure = case_when(
+           Elevation == 260 ~ 98,
+           Elevation == 4000 ~ 61
+         ),
+         treatment = paste0(substr(Elevation,1,2), "D",D)
+         )
+
+## C:N ----
+cn <- read_excel("../RAW Data/d13C_Arabidopsis_2025.xlsx") |>
+  mutate(treatment = substr(Sample_ID, 1,5),
+         cn = C/N,
+         pressure = as.numeric(case_when(
+           substr(treatment, 1, 2) == "26" ~ 98,
+           substr(treatment, 1, 2) == "40" ~ 61)),
+         D = as.numeric(substr(treatment, 4,5)),
+         drought = case_when(
+           nchar(Sample_ID) == 9 ~ substr(Sample_ID, 9,9),
+           nchar(Sample_ID) == 8 ~ "nd"
+         )
+  )
+
+## Pigments ----
+pigments <- read_csv("../Raw Data/pigments.csv") |> 
+  mutate(pressure = as.numeric(case_when(
+    substr(treatment, 1, 2) == "26" ~ 98,
+    substr(treatment, 1, 2) == "40" ~ 61)),
+    D = as.numeric(substr(treatment, 4,5)),
+    time = (substr(treatment, 7,8)),
+    treatment = substr(treatment, 1,5))|>
+  dplyr::select(-`...1`)
+
+
+## Beakers / Evaporation ----
+beakers <- read_excel("../RAW Data/beakers_2025.xlsx",
+                      range = cell_cols("A:K"))|>
+  mutate(D         = substr(treatment, 4, 5),
+         pressure  = case_when(
+           substr(treatment, 1, 2) == 26 ~ 98,
+           substr(treatment, 1, 2) == 40 ~ 61))
+
+
+## PAM data ----
+
+################
+# #Note: PAM parameters are defined as the following:
+# F0	                              Minimal chlorophyll fluorescence intensity measured in the dark-adapted state, when all PSII reaction centres are open
+# F	                                Average of Ft in 3 s , when a SP is triggered
+# Fm	                              Maximal chlorophyll fluorescence intensity measured in the dark-adapted state during the application of a saturating pulse of light
+# Fm'	                              Maximal chlorophyll fluorescence intensity measured in the light-adapted state during the application of a saturating pulse of light
+# Fv/Fm	                            Maximum quantum yield of PSII photochemistry measured in the dark-adapted state
+# Y(II)= (Fm'− Fs)/Fm'	            Effective quantum yield of photochemical energy conversion in PSII
+# NPQ=(Fm − Fm')/Fm'	              Stern-Volmer non-photochemical quenching coefficient
+# qP=(Fm'− Fs)/(Fm'− F0′)	          Coefficient of photochemical quenching of variable fluorescence based on the puddle model of PSII
+# qN=(Fm − Fm')/(Fm'−F0′)	          Coefficient of non-photochemical quenching of variable fluorescence
+# qL = qP × F0/Fs	                  Coefficient of photochemical quenching of variable fluorescence based on the lake model of PSII
+# Y(NO) = 1/(PNQ + 1 + qL(Fm/F0-1))	Quantum yield of non-regulated energy dissipation in PSII
+# Y(NPQ) = 1-Y(II)-Y(NO)	          Quantum yield of regulated energy dissipation in PSII
+#
+################
+
+pam <- read_csv("../RAW Data/PAM.csv") |>
+  mutate(treatment = substr(sample,5,9),
+         D         = as.numeric(substr(treatment, 4, 5)),
+         pressure  = case_when(
+           substr(treatment, 1, 2) == 26 ~ 98,
+           substr(treatment, 1, 2) == 40 ~ 61),
+         drought   = case_when(
+           time == "T2" & substr(ID,3,3) == "d" ~ "d",
+           .default = "nd"
+         )
+         )
+```
+## Setting important base parameters
+
+```{r}
+#set a color scheme for ever and always
+
+cols <- c("26D10" = "#fde725", 
+          "26D20" = "#35b779", 
+          "40D10" = "#31688e", 
+          "40D20" = "#440154")
+
+# #set pairs for statistical comparisons
+# my_comparisons <- list(c("26D10", "26D20"), #across humidities (const. pressure)
+#                        c("40D10", "40D20"), #across humidities (const. pressure)
+#                        c("26D10", "40D10"), #across pressures (const. hum.)
+#                        c("26D20", "40D20")) #across pressures (const. hum.)
+
+#methods for stat tests:
+method1 = "anova"
+method2 = "t.test"
+method3 = "wilcox.test" #for non-parametric data
+```
+
+## Graphs
+
+### Metabolite (chlorophyll data)
+
+First we modify the dataframe and create some background basics
+
+```{r}
+#modifying dataframe for easier faceting
+
+pigments.p <-
+  pigments |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+pigments.d <-
+  pigments |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+pigments.comp <-
+  pigments.p|>
+  add_row(pigments.d)
+
+
+```
+
+Here we look at the chlorophyll A:B ratio. First testing for normality within the dataset and then proceeding with the graphing.
+
+```{r}
+#| label: chlorophyll a:b
+#check for normality
+shapiro.test(pigments$chlab) 
+#p-value = 0.3652 and thus > than 0.05 so the data is normally distributed
+
+
+chlab.plot<-
+  pigments.comp |>
+  ggplot(aes(x = treatment, y = chlab, fill = treatment))+
+  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Chlorophyll A:B",
+       x = NULL,
+       y = "A : B")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     label.y = 3.05,
+                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final chlorophyll A/B plot
+chlab.plot
+
+# #saveplot
+# ggsave("./D Gradient Figures/chlab.plot.png", 
+#        chlab.plot,  
+#        width = 2418, 
+#        height = 1756, 
+#        units = "px")
+```
+
+Same process only for the chlorophyll to carotenoid ratio.
+
+```{r}
+#| label: chlor:car
+#check for normality
+shapiro.test(pigments$chlcar) 
+#p-value = 0.7975, thus > 0.05 and normally distributed
+
+#initial plot
+chlcar.plot<-
+pigments.comp |>
+  ggplot(aes(x = treatment, y = chlcar, fill = treatment))+
+  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Chlorophyll: Carotenoid Ratio",
+       x = NULL,
+       y = "Chlorophyll : Carotenoid")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     label.y = 4.55,
+                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(NA, 4.7)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+
+#final chlorophyll:carotene plot
+chlcar.plot
+```
+
+and finally looking at chlorophyll density
+
+```{r}
+#| label: chl density
+#check for normality
+shapiro.test(pigments$density) 
+#p-value = 0.4559, thus > 0.05 and so the data is normally distributed
+
+chlarea.plot<-
+  pigments.comp |>
+  ggplot(aes(x = treatment, y = density, fill = treatment))+
+  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Chlorophyll Density",
+       x = NULL,
+       y = expression("Density (\u03BCg chl cm"^-2*")"))+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     label.y = 40,
+                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(NA, 45)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+ 
+#final chlorophyll density plot
+chlarea.plot
+
+# #saveplot
+# ggsave("./D Gradient Figures/chlarea.plot.png", 
+#        chlarea.plot,  
+#        width = 2418, 
+#        height = 1756, 
+#        units = "px")
+
+```
+
+### Biometric Data
+
+Modifying dataframe for the faceting!
+
+```{r}
+#| include: false
+#modifying dataframe for easier faceting
+
+biomass.p <-
+  biomass |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+biomass.d <-
+  biomass |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+biomass.comp <-
+  biomass.p|>
+  add_row(biomass.d)
+
+biometric.p <-
+  biometric |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+biometric.d <-
+  biometric |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+biometric.comp <-
+  biometric.p|>
+  add_row(biometric.d)
+
+```
+
+#### Relative Water Potential
+
+```{r}
+#| label: rwc
+#| echo: true
+
+#test for normality
+shapiro.test(biomass$RWC) 
+#p-value = 9.456e-11, so the data is not normally distributed and we must use
+#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
+
+rwc.plot<- 
+  biomass.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = RWC, fill = treatment))+
+  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Relative Water Content",
+       x = NULL,
+       y = "RWC (%)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 1.2,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(drought~comparison, drop = TRUE)+
+  ylim(NA, 1.3)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+rwc.plot
+
+#ggsave("rwc.plot.png",rwc.plot)
+
+```
+
+#### Aboveground biomass
+
+```{r}
+#| label: dry biomass
+
+
+#test for normality
+shapiro.test(biomass$dryweight) 
+#p-value = 0.003224,  so the data is not normally distributed and we must use
+#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
+
+biomass.plot<- 
+  biomass.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = dryweight, fill = treatment))+
+  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Dry Biomass",
+       x = NULL,
+       y = "Dry Mass (g)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 1.2,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 1.3)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+biomass.plot
+
+#ggsave("biomass.plot.png",biomass.plot)
+```
+
+#### Leaf Number
+
+```{r}
+#| label: Leaf number
+#| eval: false
+#| include: false
+
+#check for normality in plant height data
+shapiro.test(biometric$LeafNum) 
+#p-value << 0,05, non normal - need to do parametric test
+leafnum.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = LeafNum, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Number of leaves per rosette",
+       x = NULL,
+       y = "Leaf Number")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(0, 25)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+leafnum.plot
+
+
+#final leaf height plot
+leaf.num.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+
+#### Live leaf number
+```{r}
+#| label: live leaf number
+#| eval: false
+#| include: false
+
+#check for normality in plant height data
+shapiro.test(biometric$LiveLeaf) 
+#p-value << 0,05, non normal - need to do parametric test
+
+liveleaf.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = LiveLeaf, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Number of live leaves per rosette",
+       x = NULL,
+       y = "Leaf Number")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(0, 25)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+liveleaf.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+#### Change in leaf number
+```{r}
+#| label: delta leaves
+#| echo: true
+
+#looking at the *change* in leaf number over time
+leaf.diff <- biometric.comp %>%
+  filter(drought != "d") %>% 
+  reframe(.by=c(time, ID, comparison), 
+          mean = mean(LeafNum), 
+          treatment = treatment) %>% 
+  unique() %>% 
+  pivot_wider(values_from = mean, names_from = time) %>% 
+  mutate(diff = T2-T1) %>% 
+  filter(is.na(diff)==F)
+
+#is it normally distributed?
+shapiro.test(leaf.diff$diff)
+#p-value <<< 0.05, non normal - non parametric tests here we come
+
+leafdiff.plot<- 
+  leaf.diff |>
+  ggplot(aes(x = treatment, y = diff, fill = treatment))+
+  geom_boxplot(data = leaf.diff|> dplyr::select(-comparison)|>unique(), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Change in leaves per rosette",
+       x = NULL,
+       y = "Number of Leaves")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 5,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(0, 25)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+leafdiff.plot
+
+ #ggsave("leafdiff.plot.png",leafdiff.plot)
+
+```
+
+#### Rosette Diameter
+```{r}
+#| label: Rosette Diameter
+#| eval: false
+#| include: false
+
+#check for normality in plant height data
+shapiro.test(biometric$diameter) 
+#p-value << 0,05, non normal - need to do parametric test
+
+diam.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = diameter, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Rosette Diameter",
+       x = NULL,
+       y = "Diameter (mm)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  #ylim(0, 25)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+diam.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+
+
+### Photosynthesis
+
+#### Data cleaning
+
+working through to improve faceting
+
+```{r}
+#| label: photosynthesis data cleaning
+#| include: false
+
+
+#modifying dataframe for easier faceting
+
+walz.p <-
+  walz |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+walz.d <-
+  walz |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+walz.comp <-
+  walz.p|>
+  add_row(walz.d)
+```
+
+#### Leaf temperature
+
+Comparing leaf temperature across treatments
+
+```{r}
+#| label: leaf temp
+
+#test for normality
+shapiro.test(walz$Tleaf) 
+#p-value = 0.052, so the data is (barely) normally distributed and we can use
+#parametric tests for our statistics
+
+#base facet plot
+
+tleaf.plot<-
+  walz.comp |>
+  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
+  geom_boxplot(data = walz, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Leaf Temperature",
+       x = NULL,
+       y = "Temperature °C")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+tleaf.plot
+#ggsave("tleaf.plot.png", tleaf.plot)
+```
+
+#### Internal : Ambient Carbon Concentration
+
+```{r}
+#| label: Ci:Ca
+
+#test for normality
+shapiro.test(walz$cica) 
+#p-value = 4.594e-07, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics - so we will compare our data with the
+#wilcox test (`method3`) rather than a t-test.
+
+cica.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(cica)==F)|>
+  ggplot(aes(x = treatment, y = cica, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(cica)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Internal to ambient carbon concentration",
+       x = NULL,
+       y = "Ci:Ca")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+cica.plot
+
+#save plot
+#ggsave("cica.plot.png", cica.plot)
+
+```
+
+#### Evapotranspiration
+
+```{r}
+#| label: ET
+
+shapiro.test(walz$E) 
+#p-value <<0.05, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics. We'll use the wilcox test.
+
+e.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(E)==F)|>
+  ggplot(aes(x = treatment, y = E, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(E)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Evapotranspiration",
+       x = NULL,
+       y = "ET [mmol/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+
+#final leaf height plot
+e.plot
+
+#save plot
+#ggsave("e.plot.png", e.plot)
+```
+
+#### Stomatal Conductance
+
+```{r}
+#| label: Gs
+
+#check for normality
+shapiro.test(walz$GH2O) 
+#p-value << 0.05, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics
+
+gh2o.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(GH2O)==F)|>
+  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Gas Exchange",
+       x = NULL,
+       y = "Gs [mmol H2O/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final gas exchange plot
+gh2o.plot
+
+#saveplot
+#ggsave("gh2o.plot.png", gh2o.plot)
+
+```
+
+#### Assimilation Rate
+
+```{r}
+#| label: Assimilation Rate
+
+#check for normality
+shapiro.test(walz$A) 
+#p-value = 3324, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+
+A.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(GH2O)==F)|>
+  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Assimilation Rate",
+       x = NULL,
+       y = "A [µmol/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final leaf height plot
+A.plot
+
+#ggsave("A.plot.png", A.plot)
+
+```
+
+### Carbon content - C:N ratio
+
+#### Data cleaning
+
+```{r}
+#| label: Carbon content data cleaning
+#| include: false
+
+
+#modifying dataframe for easier faceting
+
+cn.p <-
+  cn |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+cn.d <-
+  cn |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+cn.comp <-
+  cn.p|>
+  add_row(cn.d)
+```
+
+#### C:N Ratio
+
+```{r}
+#| label: C:N ratio
+
+#check for normality
+shapiro.test(cn$cn) 
+#p-value = .067, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+
+cn.plot<- 
+  cn.comp |>
+    filter(drought=="nd",is.na(cn)==F)|>
+  ggplot(aes(x = treatment, y = cn, fill = treatment))+
+  geom_boxplot(data = cn|> filter(drought=="nd", is.na(cn)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Carbon:Nitrogen Ratio",
+       x = NULL,
+       y = "C:N")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final leaf height plot
+cn.plot
+
+#save plot
+#ggsave("cn.plot.png", cn.plot)
+```
+
+#### d13C
+
+```{r}
+#| label: d13C
+
+#check for normality
+shapiro.test(abs(cn$d13C)) 
+#p-value = 0.359, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+
+d13c.plot<- 
+  cn.comp |>
+    filter(drought=="nd",is.na(d13C)==F)|>
+  ggplot(aes(x = treatment, y = d13C, fill = treatment))+
+  geom_boxplot(data = cn|> filter(drought=="nd", is.na(d13C)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "13C Discrimination",
+       x = NULL,
+       y = "d13C [per mil]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw(base_size = 20)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+
+#final leaf height plot
+d13c.plot
+
+#save plot
+#ggsave("d13C.plot.png", d13c.plot)
+
+
+```
+
+### PAM
+
+```{r}
+#| label: PAM
+#| include: false
+pam.p <-
+  pam |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+pam.d <-
+  pam |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+pam.comp <-
+  pam.p|>
+  add_row(pam.d)
+
+```
+
+#### PSII(Y)
+```{r}
+
+#summarize the data by treatment/irradiance using function established at the beginning of code then fix dataframe to make a better plot
+
+#dataframe to fill
+psii.sum <- data.frame(treatment = as.character(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       QY        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       D         = as.numeric()  ,
+                       pressure  = as.numeric()  ,
+                       time      = as.character()
+)
+
+for(sampling_time in unique(pam$time)){
+  psii.sum <- rbind(psii.sum,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "QY", 
+                      groupvars = c("treatment", "irr"))|>
+  mutate(D = substr(treatment, 4,5),
+         pressure = case_when(
+           substr(treatment, 1,2) == 26 ~ 98,
+           substr(treatment, 1,2) == 40 ~ 61
+         ),
+         time = sampling_time))
+}
+
+#clean it up to make it more palatable + graphable
+psii.sum.p <-
+  psii.sum |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+psii.sum.d <-
+  psii.sum |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+psii.sum.comp <-
+  psii.sum.p|>
+  add_row(psii.sum.d)
+
+df_pvalues <- data.frame(comp1 = as.character(),
+                         comp2 = as.character(),
+                         irradiance = as.numeric(),
+                         time = as.character(),
+                         comparison = as.character(),
+                         p.value = as.numeric()
+                         )
+for(sampling_time in unique(pam.comp$time)){
+  subset <- pam.comp|>
+    filter(time == sampling_time)
+  for (comp in unique(pam.comp$comparison)){
+    subset1 <- subset|>
+      filter(comparison == comp)
+    for(rad in unique(pam.comp$irr)){
+      subset2 <- subset1|>
+        filter(irr == rad)
+      
+      group1 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[1])|>
+                      dplyr::select(QY))
+      group2 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[2])|>
+                      dplyr::select(QY))
+      
+      wtest <- wilcox.test(group1,group2)
+      
+      df_pvalues<-rbind(df_pvalues, 
+                        data.frame(comp1 = unique(subset2$treatment)[1],
+                                   comp2 = unique(subset2$treatment)[2],
+                                   irradiance = rad,
+                                   time = sampling_time,
+                                   comparison = comp,
+                                   p.value = wtest$p.value,
+                                   sig = case_when(
+                                     wtest$p.value < 0.001 ~ "***",
+                                     wtest$p.value < 0.01  ~ "**",
+                                     wtest$p.value < 0.05  ~ "*",
+                                     wtest$p.value > 0.05  ~ " "
+                                   )
+                        )
+      )
+    }
+  }
+}
+
+#lets see what is significantly different:
+df_pvalues
+
+#plot that summary!
+
+# ggplot(psii.sum.comp, aes(x=irr, y=QY, colour = treatment))+
+#   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+#                 width = 0.1)+ 
+#                 #position = position_dodge(200))+  # 95% confidence error bars
+#   geom_point()+
+#   facet_grid(time~comparison, drop=T)
+
+psii.sum.plot<- 
+  psii.sum.comp |>
+  ggplot(aes(x = irr, y = QY, colour = treatment))+
+  geom_errorbar(data = psii.sum, 
+                color = "grey", 
+                aes(ymin = QY-ci, ymax = QY+ci), 
+                width = 0.1)+ 
+  geom_point(data = psii.sum, 
+                color = "grey", 
+                aes(x = irr, y = QY))+
+  geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+                width = 0.1)+ 
+  geom_point()+
+  geom_text(data=df_pvalues,
+            aes(x = irradiance,
+                y = rep(c(0.7, 0.55, 0.35, 0.2, 0.15),8),
+                label = sig),
+            colour = "black")+
+  labs(title = "PSII Efficiency",
+       x = "Light (uE)",
+       y = "Y(II)")+
+  scale_color_manual(values= cols)+
+  facet_grid(time~comparison, drop = TRUE)+
+  theme_bw(base_size = 15)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+psii.sum.plot
+```
+#### NPQ
+
+```{r}
+#
+npq.sum <- data.frame(treatment = as.character(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       NPQ        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       D         = as.numeric()  ,
+                       pressure  = as.numeric()  ,
+                       time      = as.character()
+)
+
+for(sampling_time in unique(pam$time)){
+  npq.sum <- rbind(npq.sum,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "NPQ1", 
+                      groupvars = c("treatment", "irr"))|>
+  mutate(D = substr(treatment, 4,5),
+         pressure = case_when(
+           substr(treatment, 1,2) == 26 ~ 98,
+           substr(treatment, 1,2) == 40 ~ 61
+         ),
+         time = sampling_time))
+}
+
+#clean it up to make it more palatable + graphable
+npq.sum.p <-
+  npq.sum |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+npq.sum.d <-
+  npq.sum |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+npq.sum.comp <-
+  npq.sum.p|>
+  add_row(npq.sum.d)
+
+df_pvalues <- data.frame(comp1 = as.character(),
+                         comp2 = as.character(),
+                         irradiance = as.numeric(),
+                         time = as.character(),
+                         comparison = as.character(),
+                         p.value = as.numeric()
+                         )
+for(sampling_time in unique(pam.comp$time)){
+  subset <- pam.comp|>
+    filter(time == sampling_time)
+  for (comp in unique(pam.comp$comparison)){
+    subset1 <- subset|>
+      filter(comparison == comp)
+    for(rad in unique(pam.comp$irr)){
+      subset2 <- subset1|>
+        filter(irr == rad)
+      
+      group1 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[1])|>
+                      dplyr::select(NPQ1))
+      group2 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[2])|>
+                      dplyr::select(NPQ1))
+      
+      wtest <- wilcox.test(group1,group2)
+      
+      df_pvalues<-rbind(df_pvalues, 
+                        data.frame(comp1 = unique(subset2$treatment)[1],
+                                   comp2 = unique(subset2$treatment)[2],
+                                   irradiance = rad,
+                                   time = sampling_time,
+                                   comparison = comp,
+                                   p.value = wtest$p.value,
+                                   sig = case_when(
+                                     wtest$p.value < 0.001 ~ "***",
+                                     wtest$p.value < 0.01  ~ "**",
+                                     wtest$p.value < 0.05  ~ "*",
+                                     wtest$p.value > 0.05  ~ " "
+                                   )
+                        )
+      )
+    }
+  }
+}
+
+#lets see what is significantly different:
+df_pvalues
+
+#plot that summary!
+
+# ggplot(psii.sum.comp, aes(x=irr, y=QY, colour = treatment))+
+#   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+#                 width = 0.1)+ 
+#                 #position = position_dodge(200))+  # 95% confidence error bars
+#   geom_point()+
+#   facet_grid(time~comparison, drop=T)
+
+npq.sum.plot<- 
+  npq.sum.comp |>
+  ggplot(aes(x = irr, y = NPQ1, colour = treatment))+
+  geom_errorbar(data = npq.sum, 
+                color = "grey", 
+                aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
+                width = 0.1)+ 
+  geom_point(data = npq.sum, 
+                color = "grey", 
+                aes(x = irr, y = NPQ1))+
+  geom_errorbar(aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
+                width = 0.1)+ 
+  geom_point()+
+  geom_text(data=df_pvalues,
+            aes(x = irradiance,
+                y = rep(c(0.3, 1.1, 1.25, 0.2, 0.15),8),
+                label = sig),
+            colour = "black")+
+  # labs(title = "PSII Efficiency",
+  #      x = "Light (uE)",
+  #      y = "Y(II)")+
+  scale_color_manual(values= cols)+
+  facet_grid(time~comparison, drop = TRUE)+
+  theme_bw(base_size = 15)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+npq.sum.plot
+```
+
+```{r}
+#| eval: false
+#| include: false
+#####
+# Note: If we compare estimates of the same coeffs from samples of different 
+# populations, we can indicate statistical significance if CIs don't overlap, 
+# but not robustly say that there is no difference if they do.
+#####
+
+#looking at some significance
+
+#A Note: We cannot compare individual models pairwise with an ANOVA as it abuses
+#the assumption of the F-test that they are nested and fitted to the same data.
+#THUS we will compare the model fitted to the _whole_ data set compared to the
+#same model fitted for each group to see if there is a statistical difference
+#between groups. If this returns positive, we will look at the alpha parameter
+#individually - the one defining the shape of the curve, using the CI interval
+#generated by nls().
+
+#convert treatments to factors
+pam.factor <- pam.comp %>% mutate(treatment = as.factor(treatment))
+
+#create frames to fill in for loop with ci overlaps
+psii.overlap <- data.frame(pair = character(),
+                           overlap = logical(),
+                           time = character())
+
+psii.cld <- data.frame(treatment = character(),
+                       comparison = character(),
+                       letter = character(),
+                       time = character())
+
+#initiate data frame to store parameter value and confidence intervals
+psii.alpha <- data.frame(treatment = character(),
+                         est = numeric(),
+                         low = numeric(),
+                         high = numeric(),
+                         stringsAsFactors = FALSE)
+
+for(comp in unique(pam.comp$comparison)){
+  subset <- pam.factor |>
+    filter(comparison == comp)|>
+    droplevels()
+  
+  for(sampling_time in unique(pam$time)){
+    #first lets understand if there is a difference between treatments
+    treat1<-nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
+                data = subset(subset, time == sampling_time & treatment == unique(subset$treatment)[1]),
+                start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
+    
+    treat2<-nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
+                data = subset(subset, time == sampling_time & treatment == unique(subset$treatment)[2]),
+                start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
+    
+    # treat2<-nls(QY ~ Pmin[treatment] + Pmax[treatment] * (exp(-alpha[treatment] * irr/Pmax[treatment])),
+    #                 data = subset(subset, time == sampling_time, treatment = unique(subset$treatment)[2]),
+    #                 start = list(Pmin =  rep(0.06, 2), 
+    #                              alpha = rep(0.001, 2), 
+    #                              Pmax =  rep(0.8, 2)))
+    
+    #compare the coefficients of the two models using the function above
+    coeffs1 <- data.frame(coef(summary(treat1)))
+    coeffs2 <- data.frame(coef(summary(treat2)))
+    
+    df <- compare_coefs(coeffs1, coeffs2)
+    p_value <-df$`p.value`
+    
+    if (any (p_value > 0.05)) {
+      cat("Non-significant result (p =", p_value, ") at", sampling_time, "for", comp,". Adding all `a´s and moving on to next Time.\n")
+      psii.cld <- rbind(psii.cld,
+                        data.frame(
+                          treatment = unique(subset$treatment),
+                          comparison = comp,
+                          group = rep("a",length(unique(subset$treatment))),
+                          time = sampling_time
+                        ))
+      next
+    }
+    else{
+      cat("Significant ANOVA result (p =", p_value, ") at", sampling_time, ". Continuing loop to look at pairwise comparisions of treatments. \n")
+    }
+    
+    for(treat in unique(subset$treatment)){
+      
+      #nonlinear least squares approx of the extracted treatment
+      treat.nls <- nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
+                       data = subset(subset, 
+                                     time == sampling_time & treatment == treat),
+                       start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
+      
+      #store values of alpha
+      psii.alpha <- rbind(psii.alpha, data.frame(
+        treatment = treat, 
+        comparison = comp,
+        alpha = coef(treat.nls)[2],
+        low = confint(treat.nls)[2,1],
+        high = confint(treat.nls)[2,2],
+        time = sampling_time))
+      
+    }
+    psii.overlap <- rbind(psii.overlap,
+                          cbind(compare_param(subset(psii.alpha, time == sampling_time)),
+                                time = sampling_time))
+    dif <- !subset(psii.overlap, time == sampling_time)$overlap
+    names <- subset(psii.overlap, time == sampling_time)$pair
+    names(dif) <- names
+    dif.letters <- multcompLetters(dif)
+    
+    psii.cld <- rbind(psii.cld,
+                      data.frame(
+                        treatment = names(dif.letters$Letters),
+                        comparison = comp,
+                        group = dif.letters$Letters,
+                        time = sampling_time
+                      ))
+    
+  }}
+
+psii.overlap
+
+psii.cld
+
+psii.alpha
+
+```
+
+```{r}
+#| eval: false
+#| include: false
+##for loop to create model and plot data + model with confidence interval
+
+#create a list to store model fit summaries
+fit.sum <- list()
+all.fit <- list()
+
+#loop for sampling time
+for(sampling_time in unique(PAM$time)){
+  plot.list <- list() #creates list to store T1 + T2 plots
+  
+  param_estimates <- data.frame(Treatment = character(), 
+                                Pmax = numeric(), 
+                                alpha = numeric(),
+                                Pmin = numeric(),
+                                stringsAsFactors = FALSE)
+  
+  print(paste("Following analyses are for time", sampling_time))
+  
+  for(treat in unique(PAM$treatment)){
+    #subset data for current treatment + sampling time
+    pam.sub <- subset(PAM,
+                      treatment == treat & time == sampling_time,
+                      select = c(irr, QY))
+    
+    #fit the model
+    print(paste (treat, "at", sampling_time))
+    print(head(pam.sub))
+    print(paste("Max PSII is:", max(pam.sub$QY), "and min PSII is:", min(pam.sub$QY)))
+    fit <- nlsLM(QY ~ SSexpDecay(irr, Pmax, alpha, Pmin),
+             data = pam.sub,
+             trace = T)
+    
+    #was this a success?
+    if(inherits(fit, "try-error")){
+      cat("Better luck next time, error fitting model for", treat, "at", sampling_time, "\n")
+      next
+    }
+    
+    #extract parameters
+    params <- coef(fit)
+    param_estimates <- rbind(param_estimates, 
+                             data.frame(treatment = treat, 
+                                        Pmax = params["Pmax"], 
+                                        alpha = params["alpha"],
+                                        Pmin = params["Pmin"]))
+    
+    #store that summary!
+    fit.sum[[paste(treat, sampling_time, sep = "_")]] <- summary(fit)
+    
+    #store the model!
+    all.fit[[paste(treat, sampling_time, sep = "_")]] <- fit
+    
+    #predictions + confidence intervals
+    irradiance_seq <- seq(min(pam.sub$irr), 
+                          max(pam.sub$irr),
+                          length.out = 100)
+    
+     # Generate predictions using the fitted model
+    pred <- predict2_nls(fit,
+                    newdata = data.frame(irr = irradiance_seq),
+                    interval = "conf",
+                    level = 0.95)
+
+    pred.df<- data.frame(treatment = treat,
+                      irr= irradiance_seq, 
+                      fit = pred[,1], 
+                      lwr = pred[,3], 
+                      upr = pred[,4])
+
+    
+    # add prediction data to plot list
+    plot.list[[treat]] <- pred.df
+  }
+  
+  #what about comparing these models?
+
+  #combine all predictions for current sampling time
+  combined_pred <- do.call(rbind, plot.list) %>% 
+    dplyr::mutate(treatment = as.character(treatment))
+  
+  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
+  ci.point <- summarySE(data = subset(PAM, time == sampling_time),
+                        "QY",
+                        groupvars = c("treatment", "irr")) %>% 
+    mutate(treatment = as.character(treatment))
+  
+  #plooooot! note: this is for one sampling time at a time
+  p <- ggplot()+
+    geom_errorbar(data = ci.point, 
+                  aes(x = irr,
+                      ymin = QY-sd, ymax = QY+sd,
+                      color = treatment), 
+                              width = 0.1, 
+                              position = position_dodge(150))+  # 95% confidence error bars
+    geom_point(data = ci.point,
+               aes(x= irr, y = QY, color = treatment),
+               position = position_dodge(150))+
+    geom_ribbon(data = combined_pred,
+                aes(x=irr, ymin =lwr, ymax=upr, fill= treatment),
+                alpha = 0.2)+
+    geom_line(data = combined_pred,
+               aes (x = irr, y= fit, color = treatment))+
+    # annotate(geom = "text", x = 3000, y= 0.57, color = "#5ec962",
+    #          label = bquote(alpha[101]~"="~ .(round(subset(param_estimates, treatment == 101)$alpha, digits = 6))))+
+    # annotate(geom = "text", x = 3000, y= 0.52, color = "#3b528b",
+    #          label = bquote(alpha[60]~"="~ .(round(subset(param_estimates, treatment == 60)$alpha, digits = 6))))+
+    # annotate(geom = "text", x= 3500, y = 0.575, label = subset(psii.cld, time == sampling_time & treatment == 101)$group)+
+    # annotate(geom = "text", x= 3500, y = 0.525, label = subset(psii.cld, time == sampling_time & treatment == 60)$group)+
+    labs(title = paste("Chlorophyll Fluorescence at", sampling_time),
+         x = "Irradiance",
+         y = "Chlorophyll Fluorescence Y(PSII)")+
+    # scale_fill_manual(values = c("#3b528b","#5ec962"),
+    #                   labels = c("60","101"))+
+    # scale_color_manual(values = c("#3b528b", "#5ec962"),
+    #                    labels = c("60", "101"))+
+    ylim(0,0.9)+
+    theme_minimal()+
+    theme(legend.position = "bottom")
+  
+  #print baby print
+  print(p)
+  #ggsave(paste("psii_",sampling_time,".png"),p, bg = "white")
+}
+
+```
+
+```{r}
+#| eval: false
+#| include: false
+
+## Y(NO) [fluorescence + dissipated heat]= Y(FD) ----
+#the sum of the fluorescence and constitive heat dissipation  (i.e. 1 - (Y(PSII) + Y(NPQ)))
+
+## We cannot compare this data using a clean logistic model because of the expected peak
+## at 100 umol Irradiance. Thus we have to compare the values of the peaks + the 
+## values of the saturation levels.
+
+#finding significances
+#for Y(NO) this is looking at the "peak" and saturation values - 
+#i.e. normal anova comparisons (as long as the data is normally distributed)
+
+yno.values <- pam %>% 
+  dplyr::select(Irradiance, YNO, Time, Treatment) %>% 
+  dplyr::filter(Irradiance==100 | Irradiance == 4500) %>%
+  dplyr:: summarise(.by = c(Time, Irradiance, Treatment), value = mean(YNO)) %>% 
+  pivot_wider(names_from = Irradiance, values_from = value) %>% 
+  dplyr::rename(peak = `100`, saturation = `4500`)
+
+for(irr in c("100", "4500")){
+  if(irr == "100"){
+    temp.group<-data.frame(Treatment = factor(),
+                           Time = character(),
+                           peak.group = character())
+  }else{
+    temp.group <- data.frame(Treatment = factor(),
+                             Time = character(),
+                             sat.group = character())
+  }
+  for(sampling_time in unique(pam$Time)){
+    
+    sub<-subset(pam, Time == sampling_time & Irradiance == as.numeric(irr))
+    
+    cat("Looking at the values at", sampling_time, "for irradiance =", irr,"\n")
+
+    #check if data is normally distributed
+    norm<-shapiro.test(sub$YNO)
+    
+    if(norm$p.value > 0.05){
+      cat("The data is normally distributed, go on. \n")
+      
+      #perform tukey post hoc on data
+      hsd <-HSD.test(aov(YNO~Treatment, data = sub), "Treatment", group = T)
+      print(hsd$groups)
+      
+      sub.group <- subset(rownames_to_column(hsd$groups, "Treatment"),
+                          select = c(Treatment, groups))
+      group.name<- colnames(temp.group)[3]
+      
+      #store data in `temp.group` dataframe
+      temp.group <- rbind(temp.group,
+                          data.frame(Treatment = sub.group$Treatment,
+                                     Time = sampling_time,
+                                     groups = sub.group$groups) %>% 
+                            dplyr::rename(!!group.name := groups))
+      
+    }else{
+      cat("The data is not normally distributed. How can we transform it? \n")
+      
+      loglike<-boxcox(YNO~Treatment, data = sub, plotit = F) #saves boxcox power transformation log-likelyhoods
+      trans<-loglike$x[which(loglike$y == max(loglike$y))]   #extracts the lambda vector (i.e. transformation) for the highest likelyhood (of normality)
+      cat("We need to use a", trans , "power transformation to have a normally distributed dataset. 
+        The following analyses will be done with said transformation on the data.\n")
+      
+      norm2<-shapiro.test(sub$YNO^trans)
+      if(norm2$p.value > 0.05){
+        cat("We now have a normally distributed (transformed) dataset. \n")
+        
+        #perform tukey post hoc on transformed data
+        hsd <-HSD.test(aov(YNO^trans~Treatment, data = sub), "Treatment", group = T)
+        print(hsd$groups)
+        
+        
+        sub.group <- subset(rownames_to_column(hsd$groups, "Treatment"),
+                            select = c(Treatment, groups))
+        group.name<- colnames(temp.group)[3]
+        
+        #store data in `temp.group` dataframe
+        temp.group <- rbind(temp.group,
+                            data.frame(Treatment = sub.group$Treatment,
+                                       Time = sampling_time,
+                                       groups = sub.group$groups) %>% 
+                              dplyr::rename(!!group.name := groups))
+        
+      }else{
+        cat("Be sad")
+        break
+      }
+    }
+  }
+  yno.values<-yno.values %>% 
+    left_join(temp.group)
+}
+
+##for loop to plot data with confidence interval
+
+#loop for sampling time
+for(sampling_time in unique(pam$Time)){
+  plot.list <- list() #creates list to store T1 + T2 plots
+  
+    print(paste("Following analyses are for time", sampling_time))
+  
+  for(treat in unique(pam$Treatment)){
+    #subset data for current treatment + sampling time
+    pam.sub <- subset(pam,
+                      Treatment == treat & Time == sampling_time,
+                      select = c(Irradiance, YNO))
+    
+    #fit the model
+    print(paste (treat, "at", sampling_time))
+    print(head(pam.sub))
+    print(paste("Saturation YNO is:", max(pam.sub$YNO), "and peak YNO is:", max(subset(pam.sub, Irradiance == 100,)$YNO)))
+  }
+
+  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
+  ci.point <- summarySE(data = subset(pam, Time == sampling_time),
+                        "YNO",
+                        groupvars = c("Treatment", "Irradiance"))
+  
+  #plooooot! note: this is for one sampling time at a time
+  p <- ggplot(data = ci.point)+
+    geom_errorbar(aes(x = Irradiance,
+                      ymin = YNO-sd, ymax = YNO+sd,
+                      color = Treatment), 
+                  width = 0.1, 
+                  position = position_dodge(100))+  # 95% confidence error bars
+    geom_point(aes(x= Irradiance, y = YNO, color = Treatment),
+               position = position_dodge(100))+
+    geom_line(aes(x = Irradiance,
+                  y = YNO, 
+                  color = Treatment))+
+    #add Asymptote annotation
+    annotate(geom = "text", x = 3500, y= 0.30, color = "#3b528b",
+             label = bquote("Y(NO)"[sat*~60]~"="~ .(round(subset(yno.values, Treatment == 60& Time == sampling_time)$saturation, digits = 3))))+
+    annotate(geom = "text", x = 3500, y= 0.29, color = "#5ec962",
+             label = bquote("Y(NO)"[sat*~101]~"="~ .(round(subset(yno.values, Treatment == 101& Time == sampling_time)$saturation, digits = 3))))+
+    annotate(geom = "text", x= 4000, y = 0.301, label = subset(yno.values, Time == sampling_time & Treatment == 60)$sat.group)+
+    annotate(geom = "text", x= 4000, y = 0.291, label = subset(yno.values, Time == sampling_time & Treatment == 101)$sat.group)+
+    #add "peak" annotation
+    annotate(geom = "text", x = 250, y= 0.325, color = "#3b528b",
+             label = bquote("peak"[60]~"="~ .(round(subset(yno.values, Treatment == 60& Time == sampling_time)$peak, digits = 3))))+
+    annotate(geom = "text", x = 250, y= 0.315, color = "#5ec962",
+             label = bquote("peak"[101]~"="~ .(round(subset(yno.values, Treatment == 101& Time == sampling_time)$peak, digits = 3))))+
+    annotate(geom = "text", x= 750, y = 0.326, label = subset(yno.values, Time == sampling_time & Treatment == 60)$peak.group)+
+    annotate(geom = "text", x= 750, y = 0.316, label = subset(yno.values, Time == sampling_time & Treatment == 101)$peak.group)+
+    scale_fill_manual(values = c("#3b528b","#5ec962"))+
+    scale_color_manual(values = c("#3b528b","#5ec962"))+
+    labs(title = paste("Fluorescence and Heat Dissipation at", sampling_time),
+         x = "Irradiance",
+         y = "Y(NO)",
+         color = "Air Pressure (kPa)",
+         fill = "Air Pressure (kPa)")+
+    theme_minimal()+
+    theme(legend.position = "bottom")
+  
+  #print baby print
+  print(p)
+  ggsave(paste("yno_",sampling_time,".png"),p, bg = "white")
+  }
+
+##Non-photochemical Quenching Y(NPQ)----
+## We can look at this data using  a asymptotic model (yay!).
+
+#summarize the data by treatment/irradiance using function established at the beginning of code
+ynpq.sum <- summarySE(data = pam, "YNPQ", groupvars = c("Treatment", "Irradiance"))
+
+#plot that summary!
+
+ggplot(ynpq.sum, aes(x=Irradiance, y=YNPQ, colour = Treatment))+
+  geom_errorbar(aes(ymin = YNPQ-ci, ymax = YNPQ+ci), 
+                width = 0.1, 
+                position = position_dodge(150))+  # 95% confidence error bars
+  geom_point(position = position_dodge(150))
+
+
+#####
+# Note: If we compare estimates of the same coeffs from samples of different 
+# populations, we can indicate statistical significance if CIs don't overlap, 
+# but not robustly say that there is no difference if they do.
+#####
+
+#looking at some significance
+
+#A Note: We cannot compare individual models pairwise with an ANOVA as it abuses
+#the assumption of the F-test that they are nested and fitted to the same data.
+#THUS we will compare the model fitted to the _whole_ data set compared to the
+#same model fitted for each group to see if there is a statistical difference
+#between groups. If this returns positive, we will look at the alpha parameter
+#individually - the one defining the shape of the curve, using the CI interval
+#generated by nls().
+
+#convert treatments to factors
+pam.factor <- pam %>% mutate(Treatment = as.factor(Treatment))
+
+#create frames to fill in for loop with ci overlaps
+ynpq.overlap <- data.frame(pair = character(),
+                           overlap = logical(),
+                           time = character())
+
+ynpq.cld <- data.frame(treatment = character(),
+                       letter = character(),
+                       time = character())
+
+
+#initiate data frame to store parameter value and confidence intervals
+ynpq.lrc <- data.frame(treatment = character(),
+                       est = numeric(),
+                       low = numeric(),
+                       high = numeric(),
+                       time = character(),
+                       stringsAsFactors = FALSE)
+
+
+for(sampling_time in unique(pam$Time)){
+  #first lets understand if there is a difference between treatments
+  no.treats<-nls(YNPQ ~ Asym*(1 - exp(-exp(lrc)*Irradiance)),
+                 data = subset(pam.factor, Time == sampling_time),
+                 start = list(Asym =  max(pam.factor$YNPQ), lrc = -6.17))
+  
+  all.treats<-nls(YNPQ ~ Asym[Treatment]*(1 - exp(-exp(lrc[Treatment])*Irradiance)),
+                  data = subset(pam.factor, Time == sampling_time),
+                  start = list(Asym =  rep(max(pam.factor$YNPQ), 2), 
+                               lrc = rep(-6.17, 2)))
+  
+  time.anova<- anova(no.treats, all.treats)
+  p_value <- time.anova$`Pr(>F)`[2]
+  
+  if (p_value > 0.05) {
+    cat("Non-significant ANOVA result (p =", p_value, ") at", sampling_time, ". Adding `a´s and moving to next Time.\n")
+    ynpq.cld <- rbind(ynpq.cld,
+                      data.frame(
+                        treatment = unique(pam$Treatment),
+                        group = rep("a",length(unique(pam$Treatment))),
+                        time = sampling_time
+                      ))
+    next
+  }
+  else{
+    cat("Significant ANOVA result (p =", p_value, ") at", sampling_time, ". Continuing loop to look at pairwise comparisions of treatments. \n")
+  }
+
+  for(treat in unique(pam$Treatment)){
+    
+    #nonlinear least squares approx of the extracted treatment
+    treat.nls <- nls(YNPQ ~ Asym*(1 - exp(-exp(lrc)*Irradiance)),
+                     data = subset(pam.factor, 
+                                   Time == sampling_time & Treatment == treat),
+                     start = list(Asym =  max(pam.factor$YNPQ), lrc = -6.17))
+    
+    #store values of alpha
+    ynpq.lrc <- rbind(ynpq.lrc, data.frame(
+      treatment = treat, 
+      lrc = coef(treat.nls)[2],
+      low = confint(treat.nls)[2,1],
+      high = confint(treat.nls)[2,2],
+      time = sampling_time))
+    
+  }
+  ynpq.overlap <- rbind(ynpq.overlap,
+                        cbind(compare_param(ynpq.lrc),
+                              time = sampling_time))
+  dif <- !subset(ynpq.overlap, time == sampling_time)$overlap
+  names <- subset(ynpq.overlap, time == sampling_time)$pair
+  names(dif) <- names
+  dif.letters <- multcompLetters(dif)
+  
+  ynpq.cld <- rbind(ynpq.cld,
+                    data.frame(
+                      treatment = names(dif.letters$Letters),
+                      group = dif.letters$Letters,
+                      time = sampling_time
+                    ))
+  
+}
+
+ynpq.overlap
+
+ynpq.cld
+
+ynpq.lrc
+
+##for loop to create model and plot data + model with confidence interval
+
+#create a list to store model fit summaries
+fit.sum <- list()
+all.fit <- list()
+
+#loop for sampling time
+for(sampling_time in unique(pam$Time)){
+  plot.list <- list() #creates list to store T1 + T2 plots
+  
+  param_estimates <- data.frame(Treatment = character(), 
+                                Asym = numeric(), 
+                                lrc = numeric(),
+                                stringsAsFactors = FALSE)
+  
+  print(paste("Following analyses are for time", sampling_time))
+  
+  for(treat in unique(pam$Treatment)){
+    #subset data for current treatment + sampling time
+    pam.sub <- subset(pam,
+                      Treatment == treat & Time == sampling_time,
+                      select = c(Irradiance, YNPQ))
+    
+    #fit the model
+    print(paste (treat, "at", sampling_time))
+    print(head(pam.sub))
+    print(paste("Max PSII is:", max(pam.sub$YNPQ)))
+    fit <- nlsLM(YNPQ ~ SSasympOrig(Irradiance, Asym, lrc),
+                 data = pam.sub,
+                 trace = T)
+    
+    #was this a success?
+    if(inherits(fit, "try-error")){
+      cat("Better luck next time, error fitting model for", treat, "at", sampling_time, "\n")
+      next
+    }
+    
+    #extract parameters
+    params <- coef(fit)
+    param_estimates <- rbind(param_estimates, 
+                             data.frame(treatment = treat, 
+                                        Asym = params["Asym"], 
+                                        lrc = params["lrc"]))
+    
+    #store that summary!
+    fit.sum[[paste(treat, sampling_time, sep = "_")]] <- summary(fit)
+    
+    #store the model!
+    all.fit[[paste(treat, sampling_time, sep = "_")]] <- fit
+    
+    #predictions + confidence intervals
+    irradiance_seq <- seq(min(pam.sub$Irradiance), 
+                          max(pam.sub$Irradiance),
+                          length.out = 100)
+    
+    # Generate predictions using the fitted model
+    pred <- predict2_nls(fit,
+                         newdata = data.frame(Irradiance = irradiance_seq),
+                         interval = "conf",
+                         level = 0.95)
+    
+    pred.df<- data.frame(Treatment = treat,
+                         Irradiance= irradiance_seq, 
+                         fit = pred[,1], 
+                         lwr = pred[,3], 
+                         upr = pred[,4])
+    
+    
+    # add prediction data to plot list
+    plot.list[[treat]] <- pred.df
+  }
+  
+  #what about comparing these models?
+  
+  #combine all predictions for current sampling time
+  combined_pred <- do.call(rbind, plot.list) %>% 
+    dplyr::mutate(Treatment = as.character(Treatment))
+  
+  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
+  ci.point <- summarySE(data = subset(pam, Time == sampling_time),
+                        "YNPQ",
+                        groupvars = c("Treatment", "Irradiance")) %>% 
+    dplyr::mutate(Treatment = as.character(Treatment))
+  
+  #plooooot! note: this is for one sampling time at a time
+  p <- ggplot()+
+    geom_errorbar(data = ci.point, 
+                  aes(x = Irradiance,
+                      ymin = YNPQ-sd, ymax = YNPQ+sd,
+                      color = Treatment), 
+                  width = 0.1, 
+                  position = position_dodge(150))+  # 95% confidence error bars
+    geom_point(data = ci.point,
+               aes(x= Irradiance, y = YNPQ, color = Treatment),
+               position = position_dodge(150))+
+    geom_ribbon(data = combined_pred,
+                aes(x=Irradiance, ymin =lwr, ymax=upr, fill= Treatment),
+                alpha = 0.2)+
+    geom_line(data = combined_pred, 
+              aes (x = Irradiance, y= fit, color = Treatment))+
+    annotate(geom = "text", x = 3000, y= 0.45, color = "#3b528b",
+             label = bquote("lrc"[60]~"="~ .(round(subset(param_estimates, treatment == 60)$lrc, digits = 3))))+
+    annotate(geom = "text", x = 3000, y= 0.41, color = "#5ec962",
+             label = bquote("lrc"[101]~"="~ .(round(subset(param_estimates, treatment == 101)$lrc, digits = 3))))+
+    annotate(geom = "text", x= 3500, y = 0.455, label = subset(ynpq.cld, time == sampling_time & treatment == 60)$group)+
+    annotate(geom = "text", x= 3500, y = 0.415, label = subset(ynpq.cld, time == sampling_time & treatment == 101)$group)+
+    scale_fill_manual(values = c("#5ec962", "#3b528b"))+
+    scale_color_manual(values = c("#5ec962", "#3b528b"))+
+    labs(title = paste("Non-Photochemical Quenching at", sampling_time),
+         x = "Irradiance",
+         y = "Y(NPQ)",
+         fill = "Air Pressure (kPa)",
+         color = "Air Pressure (kPa)")+
+    theme_minimal()+
+    theme(legend.position = "bottom")
+  
+  #print baby print
+  print(p)
+  ggsave(paste("npq_",sampling_time,".png"),p, bg = "white")
+}
+
+```
+
+
+### Beakers
+```{r}
+#| label: Beakers/evaporation
+
+#comparable data
+beakers.p <-
+  beakers |>
+  dplyr::select(treatment, `evap rate (mm/hr)`, D, pressure) |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+beakers.d <-
+  beakers |>
+  dplyr::select(treatment, `evap rate (mm/hr)`, D, pressure) |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+beakers.comp <-
+  beakers.p|>
+  add_row(beakers.d)
+
+shapiro.test(beakers$`evap rate (mm/hr)`) 
+#p-value = 0.007278, thus < 0.05 and so the data is not normally distributed
+
+beakers.plot<-
+  pigments.comp |>
+  ggplot(aes(x = treatment, y = density, fill = treatment))+
+  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Evaporation",
+       x = NULL,
+       y = "Evaporation")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 40,
+                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 45)+
+  theme_bw(base_size = 20)+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+beakers.plot
+
+```
