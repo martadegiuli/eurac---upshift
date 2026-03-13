@@ -74,7 +74,7 @@ library(multcomp)
 library(nlraa)
 library(import)
 ```
-
+## Functions
 ```{r}
 #| label: Functions
 #| include: false
@@ -332,6 +332,7 @@ pam <- read_csv("../RAW Data/PAM.csv") |>
          )
          )
 ```
+
 ## Setting important base parameters
 
 ```{r}
@@ -678,6 +679,7 @@ leaf.num.plot
 ```
 
 #### Live leaf number
+
 ```{r}
 #| label: live leaf number
 #| eval: false
@@ -718,7 +720,9 @@ liveleaf.plot
 
 #ggsave("leafnum.plot.png",leafnum.plot)
 ```
+
 #### Change in leaf number
+
 ```{r}
 #| label: delta leaves
 #| echo: true
@@ -771,6 +775,7 @@ leafdiff.plot
 ```
 
 #### Rosette Diameter
+
 ```{r}
 #| label: Rosette Diameter
 #| eval: false
@@ -811,7 +816,6 @@ diam.plot
 
 #ggsave("leafnum.plot.png",leafnum.plot)
 ```
-
 
 ### Photosynthesis
 
@@ -1177,7 +1181,7 @@ d13c.plot
 ```
 
 ### PAM
-
+#### Data cleaninging for graph making
 ```{r}
 #| label: PAM
 #| include: false
@@ -1196,6 +1200,7 @@ pam.comp <-
 ```
 
 #### PSII(Y)
+
 ```{r}
 
 #summarize the data by treatment/irradiance using function established at the beginning of code then fix dataframe to make a better plot
@@ -1306,6 +1311,9 @@ df_pvalues
 psii.sum.plot<- 
   psii.sum.comp |>
   ggplot(aes(x = irr, y = QY, colour = treatment))+
+  geom_line(data = psii.sum,
+            color = "grey",
+            aes(x=irr, y=QY))+
   geom_errorbar(data = psii.sum, 
                 color = "grey", 
                 aes(ymin = QY-ci, ymax = QY+ci), 
@@ -1315,6 +1323,7 @@ psii.sum.plot<-
                 aes(x = irr, y = QY))+
   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
                 width = 0.1)+ 
+  geom_line()+
   geom_point()+
   geom_text(data=df_pvalues,
             aes(x = irradiance,
@@ -1332,10 +1341,12 @@ psii.sum.plot<-
         legend.position = "bottom")
 psii.sum.plot
 ```
+
 #### NPQ
 
 ```{r}
-#
+#| label: Non-photochemical quenching
+
 npq.sum <- data.frame(treatment = as.character(),
                        irr       = as.numeric()  ,
                        N         = as.numeric()  ,
@@ -1441,6 +1452,7 @@ df_pvalues
 npq.sum.plot<- 
   npq.sum.comp |>
   ggplot(aes(x = irr, y = NPQ1, colour = treatment))+
+  geom_line()+
   geom_errorbar(data = npq.sum, 
                 color = "grey", 
                 aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
@@ -1456,9 +1468,9 @@ npq.sum.plot<-
                 y = rep(c(0.3, 1.1, 1.25, 0.2, 0.15),8),
                 label = sig),
             colour = "black")+
-  # labs(title = "PSII Efficiency",
-  #      x = "Light (uE)",
-  #      y = "Y(II)")+
+  labs(title = "Non-photochemical Quenching at end of Atinic Light Cycle",
+      x = "Light (uE)",
+      y = "NPQ")+
   scale_color_manual(values= cols)+
   facet_grid(time~comparison, drop = TRUE)+
   theme_bw(base_size = 15)+
@@ -1466,6 +1478,426 @@ npq.sum.plot<-
         axis.ticks.x = element_blank(), 
         legend.position = "bottom")
 npq.sum.plot
+```
+
+#### qE - rapid recovery of NPQ
+
+```{r}
+#| label: qE
+
+shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(qE))
+
+qE.sum <- data.frame(treatment = as.character(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       qE        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       D         = as.numeric()  ,
+                       pressure  = as.numeric()  ,
+                       time      = as.character()
+)
+
+for(sampling_time in unique(pam$time)){
+  qE.sum <- rbind(qE.sum,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "qE", 
+                      groupvars = c("treatment", "irr"))|>
+  mutate(D = substr(treatment, 4,5),
+         pressure = case_when(
+           substr(treatment, 1,2) == 26 ~ 98,
+           substr(treatment, 1,2) == 40 ~ 61
+         ),
+         time = sampling_time))
+}
+
+#clean it up to make it more palatable + graphable
+qE.sum.p <-
+  qE.sum |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+qE.sum.d <-
+  qE.sum |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+qE.sum.comp <-
+  qE.sum.p|>
+  add_row(qE.sum.d)
+
+df_pvalues <- data.frame(comp1 = as.character(),
+                         comp2 = as.character(),
+                         irradiance = as.numeric(),
+                         time = as.character(),
+                         comparison = as.character(),
+                         p.value = as.numeric()
+                         )
+for(sampling_time in unique(pam.comp$time)){
+  subset <- pam.comp|>
+    filter(time == sampling_time)
+  for (comp in unique(pam.comp$comparison)){
+    subset1 <- subset|>
+      filter(comparison == comp)
+    for(rad in unique(pam.comp$irr)){
+      subset2 <- subset1|>
+        filter(irr == rad)
+      
+      group1 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[1])|>
+                      dplyr::select(qE))
+      group2 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[2])|>
+                      dplyr::select(qE))
+      
+      wtest <- wilcox.test(group1,group2)
+      
+      df_pvalues<-rbind(df_pvalues, 
+                        data.frame(comp1 = unique(subset2$treatment)[1],
+                                   comp2 = unique(subset2$treatment)[2],
+                                   irradiance = rad,
+                                   time = sampling_time,
+                                   comparison = comp,
+                                   p.value = wtest$p.value,
+                                   sig = case_when(
+                                     wtest$p.value < 0.001 ~ "***",
+                                     wtest$p.value < 0.01  ~ "**",
+                                     wtest$p.value < 0.05  ~ "*",
+                                     wtest$p.value > 0.05  ~ " "
+                                   )
+                        )
+      )
+    }
+  }
+}
+
+#lets see what is significantly different:
+df_pvalues
+
+#plot that summary!
+
+# ggplot(psii.sum.comp, aes(x=irr, y=QY, colour = treatment))+
+#   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+#                 width = 0.1)+ 
+#                 #position = position_dodge(200))+  # 95% confidence error bars
+#   geom_point()+
+#   facet_grid(time~comparison, drop=T)
+
+qE.sum.plot<- 
+  qE.sum.comp |>
+  ggplot(aes(x = irr, y = qE, colour = treatment))+
+  geom_line()+
+  geom_errorbar(data = qE.sum, 
+                color = "grey", 
+                aes(ymin = qE-ci, ymax = qE+ci), 
+                width = 0.1)+ 
+  geom_point(data = qE.sum, 
+                color = "grey", 
+                aes(x = irr, y = qE))+
+  geom_errorbar(aes(ymin = qE-ci, ymax = qE+ci), 
+                width = 0.1)+ 
+  geom_point()+
+  geom_text(data=df_pvalues,
+            aes(x = irradiance,
+                y = rep(c(0.3, 1.1, 1.25, 1.25, 1.2),8),
+                label = sig),
+            colour = "black")+
+  labs(title = "Rapid Response of NPQ",
+      x = "Light (uE)",
+      y = "qE")+
+  scale_color_manual(values= cols)+
+  facet_grid(time~comparison, drop = TRUE)+
+  theme_bw(base_size = 15)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+qE.sum.plot
+```
+
+#### 1 - qP - open PSII reaction centers
+
+```{r}
+#| label: 1 - qP
+
+shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(qP))
+
+qP.sum <- data.frame(treatment = as.character(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       qP        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       D         = as.numeric()  ,
+                       pressure  = as.numeric()  ,
+                       time      = as.character()
+)
+
+for(sampling_time in unique(pam$time)){
+  qP.sum <- rbind(qP.sum,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "qP", 
+                      groupvars = c("treatment", "irr"))|>
+  mutate(D = substr(treatment, 4,5),
+         pressure = case_when(
+           substr(treatment, 1,2) == 26 ~ 98,
+           substr(treatment, 1,2) == 40 ~ 61
+         ),
+         time = sampling_time))
+}
+
+#clean it up to make it more palatable + graphable
+qP.sum.p <-
+  qP.sum |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+qP.sum.d <-
+  qP.sum |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+qP.sum.comp <-
+  qP.sum.p|>
+  add_row(qP.sum.d)
+
+df_pvalues <- data.frame(comp1 = as.character(),
+                         comp2 = as.character(),
+                         irradiance = as.numeric(),
+                         time = as.character(),
+                         comparison = as.character(),
+                         p.value = as.numeric()
+                         )
+for(sampling_time in unique(pam.comp$time)){
+  subset <- pam.comp|>
+    filter(time == sampling_time)
+  for (comp in unique(pam.comp$comparison)){
+    subset1 <- subset|>
+      filter(comparison == comp)
+    for(rad in unique(pam.comp$irr)){
+      subset2 <- subset1|>
+        filter(irr == rad)
+      
+      group1 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[1])|>
+                      dplyr::select(qP))
+      group2 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[2])|>
+                      dplyr::select(qP))
+      
+      wtest <- wilcox.test(group1,group2)
+      
+      df_pvalues<-rbind(df_pvalues, 
+                        data.frame(comp1 = unique(subset2$treatment)[1],
+                                   comp2 = unique(subset2$treatment)[2],
+                                   irradiance = rad,
+                                   time = sampling_time,
+                                   comparison = comp,
+                                   p.value = wtest$p.value,
+                                   sig = case_when(
+                                     wtest$p.value < 0.001 ~ "***",
+                                     wtest$p.value < 0.01  ~ "**",
+                                     wtest$p.value < 0.05  ~ "*",
+                                     wtest$p.value > 0.05  ~ " "
+                                   )
+                        )
+      )
+    }
+  }
+}
+
+#lets see what is significantly different:
+df_pvalues
+
+#plot that summary!
+
+# ggplot(psii.sum.comp, aes(x=irr, y=QY, colour = treatment))+
+#   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+#                 width = 0.1)+ 
+#                 #position = position_dodge(200))+  # 95% confidence error bars
+#   geom_point()+
+#   facet_grid(time~comparison, drop=T)
+
+qP.sum.plot<- 
+  qP.sum.comp |>
+  ggplot(aes(x = irr, y = qP, colour = treatment))+
+  geom_line()+
+  geom_errorbar(data = qP.sum, 
+                color = "grey", 
+                aes(ymin = qP-ci, ymax = qP+ci), 
+                width = 0.1)+ 
+  geom_point(data = qP.sum, 
+                color = "grey", 
+                aes(x = irr, y = qP))+
+  geom_errorbar(aes(ymin = qP-ci, ymax = qP+ci), 
+                width = 0.1)+ 
+  geom_point()+
+  geom_text(data=df_pvalues,
+            aes(x = irradiance,
+                y = rep(c(0.9, 0.75, 0.55, 0.3, 0.25),8),
+                label = sig),
+            colour = "black")+
+  labs(title = "Fraction of open PSII reaction centers at the end of atinic light",
+      x = "Light (uE)",
+      y = "1 - qP")+
+  scale_color_manual(values= cols)+
+  facet_grid(time~comparison, drop = TRUE)+
+  theme_bw(base_size = 15)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+qP.sum.plot
+```
+
+#### ETR
+
+```{r}
+#| label: ETR
+
+shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(ETR))
+
+ETR.sum <- data.frame(treatment = as.character(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       ETR        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       D         = as.numeric()  ,
+                       pressure  = as.numeric()  ,
+                       time      = as.character()
+)
+
+for(sampling_time in unique(pam$time)){
+  ETR.sum <- rbind(ETR.sum,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "ETR", 
+                      groupvars = c("treatment", "irr"))|>
+  mutate(D = substr(treatment, 4,5),
+         pressure = case_when(
+           substr(treatment, 1,2) == 26 ~ 98,
+           substr(treatment, 1,2) == 40 ~ 61
+         ),
+         time = sampling_time))
+}
+
+#clean it up to make it more palatable + graphable
+ETR.sum.p <-
+  ETR.sum |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+ETR.sum.d <-
+  ETR.sum |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+ETR.sum.comp <-
+  ETR.sum.p|>
+  add_row(ETR.sum.d)
+
+df_pvalues <- data.frame(comp1 = as.character(),
+                         comp2 = as.character(),
+                         irradiance = as.numeric(),
+                         time = as.character(),
+                         comparison = as.character(),
+                         p.value = as.numeric()
+                         )
+for(sampling_time in unique(pam.comp$time)){
+  subset <- pam.comp|>
+    filter(time == sampling_time)
+  for (comp in unique(pam.comp$comparison)){
+    subset1 <- subset|>
+      filter(comparison == comp)
+    for(rad in unique(pam.comp$irr)){
+      subset2 <- subset1|>
+        filter(irr == rad)
+      
+      group1 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[1])|>
+                      dplyr::select(ETR))
+      group2 = pull(pam.comp|>
+                      filter(comparison == comp, 
+                             irr==rad, 
+                             treatment == unique(subset2$treatment)[2])|>
+                      dplyr::select(ETR))
+      
+      wtest <- wilcox.test(group1,group2)
+      
+      df_pvalues<-rbind(df_pvalues, 
+                        data.frame(comp1 = unique(subset2$treatment)[1],
+                                   comp2 = unique(subset2$treatment)[2],
+                                   irradiance = rad,
+                                   time = sampling_time,
+                                   comparison = comp,
+                                   p.value = wtest$p.value,
+                                   sig = case_when(
+                                     wtest$p.value < 0.001 ~ "***",
+                                     wtest$p.value < 0.01  ~ "**",
+                                     wtest$p.value < 0.05  ~ "*",
+                                     wtest$p.value > 0.05  ~ " "
+                                   )
+                        )
+      )
+    }
+  }
+}
+
+#lets see what is significantly different:
+df_pvalues
+
+#plot that summary!
+
+# ggplot(psii.sum.comp, aes(x=irr, y=QY, colour = treatment))+
+#   geom_errorbar(aes(ymin = QY-ci, ymax = QY+ci), 
+#                 width = 0.1)+ 
+#                 #position = position_dodge(200))+  # 95% confidence error bars
+#   geom_point()+
+#   facet_grid(time~comparison, drop=T)
+
+ETR.sum.plot<- 
+  ETR.sum.comp |>
+  ggplot(aes(x = irr, y = ETR, colour = treatment))+
+  geom_line()+
+  geom_errorbar(data = ETR.sum, 
+                color = "grey", 
+                aes(ymin = ETR-ci, ymax = ETR+ci), 
+                width = 0.1)+ 
+  geom_point(data = ETR.sum, 
+                color = "grey", 
+                aes(x = irr, y = ETR))+
+  geom_errorbar(aes(ymin = ETR-ci, ymax = ETR+ci), 
+                width = 0.1)+ 
+  geom_point()+
+  geom_text(data=df_pvalues,
+            aes(x = irradiance,
+                y = rep(c(0.9, 0.75, 90, 95, 0.25),8),
+                label = sig),
+            colour = "black")+
+  labs(title = "Electron Transport Rate",
+      x = "Light (uE)",
+      y = "ETR")+
+  scale_color_manual(values= cols)+
+  facet_grid(time~comparison, drop = TRUE)+
+  theme_bw(base_size = 15)+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+ETR.sum.plot
 ```
 
 ```{r}
@@ -2130,8 +2562,8 @@ for(sampling_time in unique(pam$Time)){
 
 ```
 
-
 ### Beakers
+
 ```{r}
 #| label: Beakers/evaporation
 
