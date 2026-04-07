@@ -1,5 +1,5 @@
 ---
-title: "UPSHIFT_2025 - Plots"
+title: "UPSHIFT_2025"
 author: "Marta De Giuli"
 execute: 
   echo: false
@@ -10,6 +10,11 @@ format:
           \usepackage[export]{adjustbox} %commands for manipulating graphix more (side legends)
 toc: true
 editor: visual
+number-sections: true
+knitr:
+  opts_chunk: 
+    collapse: true
+    comment: "#"
 ---
 
 # Data description
@@ -44,7 +49,7 @@ Covariates:
 
 -   Chlorophyll fluorescence measurements, as taken with a FluorCAM 600 from leaf discs:
 
-    -   Y(II), NPQ, 1-qL
+    -   PSII (Y), NPQ, 1-qL
 
 -   Metabolitic measurements
 
@@ -54,10 +59,8 @@ Covariates:
 
 {{< pagebreak >}}
 
-# Background Code
-
 ```{r}
-#| label: Libraries
+#| label: Background Code: Libraries
 #| include: false
 #load libraries
 
@@ -83,14 +86,18 @@ library(multcomp)
 library(nlraa)
 library(import)
 library(lme4)
+library(knitr)
+library(kableExtra)
 
 #import functions:
 source("functions.R")
 ```
 
 ```{r}
-#| label: Importing Data
-#| include: false
+#| label: Background Code: Importing Data
+#| echo: false
+#| message: false
+#| warning: false
 
 # growth parameters ----
 
@@ -186,8 +193,8 @@ pam <- read_csv("../RAW Data/PAM.csv") |>
   mutate(treatment = substr(sample,5,9),
          D         = as.numeric(substr(treatment, 4, 5)),
          pressure  = case_when(
-           substr(treatment, 1, 2) == 26 ~ 98,
-           substr(treatment, 1, 2) == 40 ~ 61),
+           substr(treatment, 1, 2) == 26 ~ as.factor(98),
+           substr(treatment, 1, 2) == 40 ~ as.factor(61)),
          drought   = case_when(
            time == "T2" & substr(ID,3,3) == "d" ~ "d",
            .default = "nd"
@@ -209,20 +216,17 @@ pam2024 <- read_csv("../RAW Data/PAM_2024.csv") |>
 ```
 
 ```{r}
-#| label: base params
+#| label: Background Code : Base params
 #| include: false
 #set a color scheme for ever and always
 
-cols <- c("26D10" = "#fde725", 
+cols4 <- c("26D10" = "#fde725", 
           "26D20" = "#35b779", 
           "40D10" = "#31688e", 
           "40D20" = "#440154")
 
-# #set pairs for statistical comparisons
-# my_comparisons <- list(c("26D10", "26D20"), #across humidities (const. pressure)
-#                        c("40D10", "40D20"), #across humidities (const. pressure)
-#                        c("26D10", "40D10"), #across pressures (const. hum.)
-#                        c("26D20", "40D20")) #across pressures (const. hum.)
+cols2 <- c("98" = "#35b779", 
+          "61" = "#440154")
 
 #methods for stat tests:
 method1 = "anova"
@@ -232,27 +236,12 @@ method3 = "wilcox.test" #for non-parametric data
 
 # Graphing!
 
-Before starting with the deeper analyses, it is important to check that our treatments pressure x D (normalized VPD) worked as expected. To do so, we placed two beakers in each chamber and measured evaporation throughout the experiment.
+Before starting with the deeper analyses, it is important to check that our treatments *pressure x D* (normalized VPD) worked as expected. To do so, we placed two beakers in each chamber and measured evaporation throughout the experiment.
 
 ## Evaporation
 
 ```{r}
 #| label: Beakers/evaporation
-
-#comparable data
-# beakers.p <-
-#   beakers |>
-#   dplyr::select(treatment, E, D, pressure) |>
-#   mutate(comparison = paste0("P = ", as.character(pressure)))
-# 
-# beakers.d <-
-#   beakers |>
-#   dplyr::select(treatment, E, D, pressure) |>
-#   mutate(comparison = paste0("D = ", as.character(D)))
-# 
-# beakers.comp <-
-#   beakers.p|>
-#   add_row(beakers.d)
 
 beakers.comp <- add_comp(beakers, "pressure", "D")
 
@@ -267,7 +256,7 @@ cat(paste("Since the p-value is",
 
 beakers.plot<-
   beakers.comp |>
-  ggplot(aes(x = treatment, y = `evap rate (mm/hr)`, fill = treatment))+
+  ggplot(aes(x = treatment, y = E, fill = treatment))+
   geom_boxplot(data = beakers, color = "grey",fill = "grey")+ 
   geom_boxplot()+
   geom_jitter(width=0.01)+
@@ -293,186 +282,8 @@ beakers.plot<-
 beakers.plot
 
 ```
-As expected, we observe a strong statistical difference between humidities at the same pressure (panels P= 61 and P = 98), with chambers at D = 20 showing higher evaporation.
 
-
-## Metabolite (chlorophyll data)
-
-```{r}
-#| label: modifying df for faceting
-#| include: false
-#modifying dataframe for easier faceting
-
-pigments.comp <- add_comp(pigments, "pressure", "D")
-
-
-```
-
-### Chlorophyll A:B
-
-Here we look at the chlorophyll A:B ratio. First testing for normality within the dataset and then proceeding with the graphing.
-
-```{r}
-#| label: chlorophyll a:b
-#| echo: false
-#check for normality
-shapiro.test(pigments$chlab) 
-#p-value = 0.3652 and thus > than 0.05 so the data is normally distributed
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(pigments$chlab)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(pigments$chlab)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-chlab.plot<-
-  pigments.comp |>
-  ggplot(aes(x = treatment, y = chlab, fill = treatment))+
-  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Chlorophyll A:B",
-       x = NULL,
-       y = "A : B")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     label.y = 3.05,
-                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
-  )+
-  stat_compare_means(method = method2, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final chlorophyll A/B plot
-chlab.plot
-
-# #saveplot
-# ggsave("./D Gradient Figures/chlab.plot.png", 
-#        chlab.plot,  
-#        width = 2418, 
-#        height = 1756, 
-#        units = "px")
-```
-
-{{< pagebreak >}}
-
-### Chlorophyll : Carotenoid
-
-Same process only for the chlorophyll to carotenoid ratio.
-
-```{r}
-#| label: chlor:car
-#| echo: false
-#check for normality
-shapiro.test(pigments$chlcar) 
-#p-value = 0.7975, thus > 0.05 and normally distributed
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(pigments$chlab)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(pigments$chlab)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-
-#initial plot
-chlcar.plot<-
-pigments.comp |>
-  ggplot(aes(x = treatment, y = chlcar, fill = treatment))+
-  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Chlorophyll: Carotenoid Ratio",
-       x = NULL,
-       y = "Chlorophyll : Carotenoid")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     label.y = 4.55,
-                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
-  )+
-  stat_compare_means(method = method2, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(NA, 4.7)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-
-#final chlorophyll:carotene plot
-chlcar.plot
-```
-
-{{< pagebreak >}}
-
-### Chlorophyll Density
-
-and finally looking at chlorophyll density
-
-```{r}
-#| label: chl density
-#| echo: false
-#check for normality
-shapiro.test(pigments$density) 
-#p-value = 0.4559, thus > 0.05 and so the data is normally distributed
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(pigments$density)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(pigments$density)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-chlarea.plot<-
-  pigments.comp |>
-  ggplot(aes(x = treatment, y = density, fill = treatment))+
-  geom_boxplot(data = pigments, color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Chlorophyll Density",
-       x = NULL,
-       y = expression("Density (\u03BCg chl cm"^-2*")"))+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     label.y = 40,
-                     label.x = c(2, 3, 3.5, 1, 2, 3, 3.5, 1)
-  )+
-  stat_compare_means(method = method2, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(NA, 45)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
- 
-#final chlorophyll density plot
-chlarea.plot
-
-# #saveplot
-# ggsave("./D Gradient Figures/chlarea.plot.png", 
-#        chlarea.plot,  
-#        width = 2418, 
-#        height = 1756, 
-#        units = "px")
-
-```
-
-{{< pagebreak >}}
+As expected, we observe a strong statistical difference between humidities at the same pressure (panels P= 61 and P = 98), with chambers at D = 20 showing higher evaporation. Thus we will move on with our analyses.
 
 ## Chlorophyll Fluorescence
 
@@ -494,18 +305,30 @@ pam.comp <-
   add_row(pam.d)
 
 ```
-### Aggregating- Humidities - Years? 
 
-In previous discussions, we have spoken about the fact that humidity seems to have a much smaller impact on chlorophyll fluorescence values than pressure. This means need to check whether this is true, we can do this by comparing 3 models:
-a) response ~ irradiance + pressure + time
-b) response ~ irradiance + pressure + D + time
-c) response ~ irradiance + pressure + D + pressure*D + time
+### Aggregating- Humidities - Years?  {#sec-anova}
+
+In previous discussions, we have spoken about the fact that humidity seems to have a much smaller impact on chlorophyll fluorescence values than pressure. To check whether this is true, we can compare four nested models:
+
+a)  response \~ irradiance + pressure
+
+b)  response \~ irradiance + pressure + time
+
+c)  response \~ irradiance + pressure + D + time
+
+d)  response \~ irradiance + pressure + D + pressure\*D + time
+
+This will also enable us to understand whether there are general *interacting effects* of pressure and humidity. Here we look at the case study for the yield of PSII (see @sec-supp.anova for the other response terms).
 
 ```{r}
 #| label: chl fluor pressure v D anova
 #| echo: false
 #| message: false
 #| warning: false
+#| lst-cap: Import pyplot
+#| lst-label: lst-psii.anova
+
+
 subset.pam <- pam |>
   filter(light == "Lss")
 
@@ -515,13 +338,20 @@ psii.model.2025b<-lm(QY ~ irr + pressure + D + time,
                         data = subset.pam)
 psii.model.2025c<-lm(QY ~ irr + pressure + time,
                         data = subset.pam)
+psii.model.2025d<-lm(QY ~ irr + pressure,
+                        data = subset.pam)
 
-anova(psii.model.2025, psii.model.2025b, psii.model.2025c)
+anova(psii.model.2025, psii.model.2025b, psii.model.2025c, psii.model.2025d)
 
 ```
-It seems that the best model is the one that doesn't include humidity at all, as seen by the lower AIC for that model than the other two. This seems to indicate that we can start making our comparisons looking simply at the difference between pressure treatments, allowing us to double our number of samples per treatment. 
 
-Seeing the result indicating that humidity doesn't add explicative value to the model, it could be possible to aggregate last experiment's data to this years. To test whether it is statistically reasonable to do, let's see if a model including year as a fixed effect, performs better.
+Since the explanatory power of the models doesn't decrease with the removal of the interaction + humidity terms, it seems that the best model is the one that doesn't include humidity at all. This seems to indicate that we can start making our comparisons looking simply at the difference between pressure treatments, allowing us to double our number of samples per treatment. It would be possible to also drop time as no *significant* change in explanatory power is seen. I would argue this would be pseudo-replication though - it could be problematic to defend to a potential reviewer.
+
+Seeing the result indicating that humidity doesn't add explicative value to the model, it could be possible to aggregate last experiment's data to this years. To test whether it is statistically reasonable to do, let's see if a model including year as a fixed effect, performs better. The two compared models will be:
+
+a)  psii \~ irr + pressure + time
+
+b)  psii \~ irr + pressure + time + year
 
 ```{r}
 #| label: 2024 vs 2025 anova
@@ -557,7 +387,1156 @@ psii.model.c <- lm(psii ~ irr + pressure + time + year,
 anova(psii.model.b, psii.model.c)
 
 ```
-The model with time as fixed effect performs significantly, explaining the variance best, indicating that it is needed to explain the variance in the agglomerated data. This means that we cannot aggregate results from the separate years, without considering year as a fundamental parameter. We will continue the analyses simply looking at year 2025.
+
+The model with time as fixed effect performs significantly better, explaining the variance best, indicating that it is needed to explain the variance in the aggregated data. This means that we cannot aggregate results from the separate years, without considering year as a fundamental parameter.
+
+We will continue the analyses simply looking at year 2025, but aggregating as mentioned above by pressure.
+
+### Aggregated PSII(Y)
+
+```{r}
+#| label: agg psii
+#| echo: false
+#| message: false
+#| warning: false
+
+#dataframe to fill for summary data
+psii.agg <- data.frame(pressure  = factor(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       QY        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       time      = as.character()
+)
+
+#summarize using defined function
+for(sampling_time in unique(pam$time)){
+  psii.agg <- rbind(psii.agg,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "QY", 
+                      groupvars = c("pressure", "irr"))|>
+  mutate(time = sampling_time,
+         pressure = as.factor(pressure)))
+}
+
+
+##calculate stat signif - type of test (wilcox for non-parametric option or t test for parametric option is chosen by the function depending on the distribution of the data)
+
+df_pvalues.psii<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "QY")
+
+psii.agg.plot <- base_plot2(psii.agg, xvals = "irr", yvals = "QY", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.psii, y.axis = "PSII (Y)", x.axis = "Light (uE)", colscale = "cols2")
+
+psii.agg.plot
+
+```
+
+### Aggregated NPQ
+
+```{r}
+#| label: agg npq
+#| echo: false
+#| message: false
+#| warning: false
+
+
+#dataframe to fill for summary data
+npq.agg <- data.frame(pressure  = factor(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       NPQ        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       time      = as.character()
+)
+
+#summarize using defined function
+for(sampling_time in unique(pam$time)){
+  npq.agg <- rbind(npq.agg,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "NPQ1", 
+                      groupvars = c("pressure", "irr"))|>
+  mutate(time = sampling_time,
+         pressure = as.factor(pressure)))
+}
+
+
+##calculate stat signif - type of test (wilcox for non-parametric option or t test for parametric option is chosen by the function depending on the distribution of the data)
+
+df_pvalues.npq <-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "NPQ1" )
+
+npq.agg.plot <- base_plot2(npq.agg, xvals = "irr", yvals = "NPQ1", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.npq, y.axis = "NPQ", x.axis = "Light (uE)", colscale = "cols2")
+
+npq.agg.plot
+
+```
+
+### Aggregated ETR
+
+```{r}
+#| label: agg etr
+#| echo: false
+#| message: false
+#| warning: false
+
+#dataframe to fill for summary data
+etr.agg <- data.frame(pressure  = factor(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       ETR        = as.numeric() ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       time      = as.character()
+)
+
+#summarize using defined function
+for(sampling_time in unique(pam$time)){
+  etr.agg <- rbind(etr.agg,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "ETR", 
+                      groupvars = c("pressure", "irr"))|>
+  mutate(time = sampling_time,
+         pressure = as.factor(pressure)))
+}
+
+
+##calculate stat signif
+
+df_pvalues.etr<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "ETR" )
+
+#plotting
+etr.agg.plot <- base_plot2(etr.agg, xvals = "irr", yvals = "ETR", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.etr, y.axis = "ETR", colscale = "cols2")
+
+etr.agg.plot
+```
+
+### Aggregated qE
+
+```{r}
+#| label: agg qE
+#| echo: false
+#| message: false
+#| warning: false
+
+#dataframe to fill for summary data
+qE.agg <- data.frame(pressure  = factor(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       qE        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       time      = as.character()
+)
+
+#summarize using defined function
+for(sampling_time in unique(pam$time)){
+  qE.agg <- rbind(qE.agg,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "qE", 
+                      groupvars = c("pressure", "irr"))|>
+  mutate(time = sampling_time,
+         pressure = as.factor(pressure)))
+}
+
+
+##calculate stat signif
+
+df_pvalues.qE<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "qE" )
+
+#plot!
+
+qE.agg.plot <- base_plot2(qE.agg, xvals = "irr", yvals = "qE", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qE, y.axis = "qE", x.axis = "Light (uE)", colscale = "cols2")
+
+qE.agg.plot
+```
+
+### Aggregated qP
+
+```{r}
+#| label: agg qP
+#| echo: false
+#| message: false
+#| warning: false
+
+#dataframe to fill for summary data
+qP.agg <- data.frame(pressure  = factor(),
+                       irr       = as.numeric()  ,
+                       N         = as.numeric()  ,
+                       qP        = as.numeric()  ,
+                       sd        = as.numeric()  ,
+                       se        = as.numeric()  ,
+                       ci        = as.numeric()  ,
+                       time      = as.character()
+)
+
+#summarize using defined function
+for(sampling_time in unique(pam$time)){
+  qP.agg <- rbind(qP.agg,
+                    summarySE(data = pam |> 
+                        filter(light=="Lss", 
+                               drought == "nd", 
+                               time == sampling_time), 
+                      "qP", 
+                      groupvars = c("pressure", "irr"))|>
+  mutate(time = sampling_time,
+         pressure = as.factor(pressure)))
+}
+
+
+##calculate stat signif
+
+df_pvalues.qP<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "qP" )
+
+#convert to 1 - qP for plotting
+qP.agg <- qP.agg |> 
+  dplyr::mutate(qP = case_when(
+    qP != 0 ~ 1-qP,
+    TRUE ~ qP
+  ))
+
+
+qP.agg.plot <- base_plot2(qP.agg, xvals = "irr", yvals = "qP", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qP, y.axis = "qP", x.axis = "Light (uE)")
+
+qP.agg.plot
+```
+
+
+## Photosynthesis
+
+```{r}
+#| label: photosynthesis data cleaning
+#| include: false
+
+#### Data cleaning
+
+#working through to improve faceting
+#modifying dataframe for easier faceting
+
+walz.p <-
+  walz |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+walz.d <-
+  walz |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+walz.comp <-
+  walz.p|>
+  add_row(walz.d)
+```
+
+### Leaf temperature
+
+Comparing leaf temperature across treatments
+
+```{r}
+#| label: leaf temp
+
+#test for normality
+shapiro.test(walz$Tleaf) 
+#p-value = 0.052, so the data is (barely) normally distributed and we can use
+#parametric tests for our statistics
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+#base facet plot
+
+tleaf.plot<-
+  walz.comp |>
+  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
+  geom_boxplot(data = walz, color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Leaf Temperature",
+       x = NULL,
+       y = "Temperature °C")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+tleaf.plot
+#ggsave("tleaf.plot.png", tleaf.plot)
+```
+
+{{< pagebreak >}}
+
+### Internal : Ambient Carbon Concentration
+
+```{r}
+#| label: Ci:Ca
+
+#test for normality
+shapiro.test(walz$cica) 
+#p-value = 4.594e-07, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics - so we will compare our data with the
+#wilcox test (`method3`) rather than a t-test.
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$cica)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$cica)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+cica.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(cica)==F)|>
+  ggplot(aes(x = treatment, y = cica, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(cica)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Internal to ambient carbon concentration",
+       x = NULL,
+       y = "Ci:Ca")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+cica.plot
+
+#save plot
+#ggsave("cica.plot.png", cica.plot)
+
+```
+
+{{< pagebreak >}}
+
+### Transpiration
+
+```{r}
+#| label: T
+
+shapiro.test(walz$E) 
+#p-value <<0.05, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics. We'll use the wilcox test.
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$E)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$E)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+e.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(E)==F)|>
+  ggplot(aes(x = treatment, y = E, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(E)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_below, geom = "text", vjust = 1.15)+
+  labs(title = "Transpiration",
+       x = NULL,
+       y = "T [mmol/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom") +
+  coord_cartesian(clip = "off")
+
+
+
+#final leaf height plot
+e.plot
+
+#save plot
+#ggsave("e.plot.png", e.plot)
+```
+
+{{< pagebreak >}}
+
+### Stomatal Conductance
+
+```{r}
+#| label: Gs
+
+#check for normality
+shapiro.test(walz$GH2O) 
+#p-value << 0.05, so the data is not normally distributed and we can't use 
+#parametric tests for our statistics
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+gh2o.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(GH2O)==F)|>
+  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Gas Exchange",
+       x = NULL,
+       y = "Gs [mmol H2O/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final gas exchange plot
+gh2o.plot
+
+#saveplot
+#ggsave("gh2o.plot.png", gh2o.plot)
+
+```
+
+We can compare this to the results from the last experiment:
+
+\begin{figure}[H]
+\centering
+\subfloat[D Gradient - Stomatal Conductance][Response to $D$ gradient.]{
+    \includegraphics[width=0.49\textwidth]{../../2024/Manuscript/pics/D Gradient/gh2o.whole.plot.png}
+    \label{fig:d.gs}}
+\subfloat[Pressure - Stomatal Conductance][Response to pressure.]{
+    \includegraphics[width=0.49\textwidth]{../../2024/Manuscript/pics/Pressure/gh2o.whole.plot.png}
+    \label{fig:p.gs}}
+\caption{Response of stomatal conductance in \textit{A. thaliana} to two different treatment types, data from both sampling times. Letters indicate significant differences based on post hoc tests (p $<$ 0.05).}
+\label{fig:gs}
+\end{figure}
+
+{{< pagebreak >}}
+
+### Assimilation Rate
+
+```{r}
+#| label: Assimilation Rate
+
+#check for normality
+shapiro.test(walz$A) 
+#p-value = 3324, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+A.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(A)==F)|>
+  ggplot(aes(x = treatment, y = A, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(A)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Assimilation Rate",
+       x = NULL,
+       y = "A [µmol/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final leaf height plot
+A.plot
+
+#ggsave("A.plot.png", A.plot)
+
+```
+
+{{< pagebreak >}}
+
+## Metabolite (chlorophyll data)
+
+```{r}
+#| label: modifying df for faceting
+#| include: false
+#modifying dataframe for easier faceting
+
+pigments.comp <- add_comp(pigments, "pressure", "D")
+
+
+```
+
+### Chlorophyll A:B
+
+Here we look at the chlorophyll A:B ratio. First testing for normality within the dataset and then proceeding with the graphing.
+
+```{r}
+#| label: chlorophyll a:b
+#| echo: false
+
+chlab.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "chlab", group = "treatment", colscale = "cols", facets = c("time", "comparison"), type = "boxplot", y.axis = "Chlorophyll A:B Ratio" )
+
+chlab.plot
+```
+
+{{< pagebreak >}}
+
+### Chlorophyll : Carotenoid
+
+Same process only for the chlorophyll to carotenoid ratio.
+
+```{r}
+#| label: chlor:car
+#| echo: false
+
+chlcar.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "chlcar", group = "treatment", colscale = "cols", facets = c("time", "comparison"), type = "boxplot", y.axis = "Chlorophyll : Carotenoid Ratio" )
+
+chlcar.plot
+```
+
+{{< pagebreak >}}
+
+### Chlorophyll Density
+
+and finally looking at chlorophyll density
+
+```{r}
+#| label: chl density
+#| echo: false
+
+chlarea.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "density", group = "treatment", colscale = "cols", facets = c("time", "comparison"), type = "boxplot", y.axis = expression("Chlorophyll Density (\u03BCg chl cm"^-2*")") )
+
+chlarea.plot
+```
+
+{{< pagebreak >}}
+
+## Carbon content - C:N ratio
+
+```{r}
+#| label: Carbon content data cleaning
+#| include: false
+
+#### Data cleaning
+#modifying dataframe for easier faceting
+
+cn.p <-
+  cn |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+cn.d <-
+  cn |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+cn.comp <-
+  cn.p|>
+  add_row(cn.d)
+```
+
+### C:N Ratio
+
+```{r}
+#| label: C:N ratio
+
+#check for normality
+shapiro.test(cn$cn) 
+#p-value = .067, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(cn$cn)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(cn$cn)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+cn.plot<- 
+  cn.comp |>
+    filter(drought=="nd",is.na(cn)==F)|>
+  ggplot(aes(x = treatment, y = cn, fill = treatment))+
+  geom_boxplot(data = cn|> filter(drought=="nd", is.na(cn)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Carbon:Nitrogen Ratio",
+       x = NULL,
+       y = "C:N")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method2, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method2, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final leaf height plot
+cn.plot
+
+#save plot
+#ggsave("cn.plot.png", cn.plot)
+```
+
+{{< pagebreak >}}
+
+### d13C
+
+```{r}
+#| label: d13C
+
+#check for normality
+shapiro.test(abs(cn$C_discr)) 
+#p-value = 2.841e-05, so the data is not normally distributed and we cannot use parametric 
+#tests for our statistics
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+d13c.plot<- 
+  cn.comp |>
+    filter(drought=="nd",is.na(C_discr)==F)|>
+  ggplot(aes(x = treatment, y = C_discr, fill = treatment))+
+  geom_boxplot(data = cn|> filter(drought=="nd", is.na(C_discr)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "13C Discrimination",
+       x = NULL,
+       y = "d13C [per mil]",
+       subtitle =  "normalized to d13C of air in each chamber")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+
+#final leaf height plot
+d13c.plot
+
+#save plot
+#ggsave("d13C.plot.png", d13c.plot)
+
+
+```
+
+Here too we can compare our results to the previous experiment's "imperfect" results:
+
+\begin{figure}[H]
+    \centering
+    \subfloat[Response to $D$ gradient.]{
+        \includegraphics[width = 0.49\textwidth]{../../2024/Manuscript/pics/D Gradient/d13C.plot.png}
+        \label{fig:d.d13c}
+    }
+    \subfloat[Response to pressure.]{
+        \includegraphics[width = 0.49\linewidth]{../../2024/Manuscript/pics/Pressure/d13C.plot.png}
+        \label{fig:p.d13c}
+    }
+    \caption{Response of $\delta^{13}$C in \textit{A. thaliana} to two treatment types. Letters indicate significant differences based on post hoc tests (p $<$ 0.05).}
+    \label{fig:d13c}
+\end{figure}
+
+{{< pagebreak >}}
+
+## Biometric Data
+
+```{r}
+#| include: false
+#modifying dataframe for easier faceting
+
+biomass.p <-
+  biomass |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+biomass.d <-
+  biomass |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+biomass.comp <-
+  biomass.p|>
+  add_row(biomass.d)
+
+biometric.p <-
+  biometric |>
+  mutate(comparison = paste0("P = ", as.character(pressure)))
+
+biometric.d <-
+  biometric |>
+  mutate(comparison = paste0("D = ", as.character(D)))
+
+biometric.comp <-
+  biometric.p|>
+  add_row(biometric.d)
+
+```
+
+### Relative Water Content
+
+```{r}
+#| label: rwc
+#| echo: false
+
+#test for normality
+shapiro.test(biomass$RWC) 
+#p-value = 9.456e-11, so the data is not normally distributed and we must use
+#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(biomass$RWC)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(biomass$RWC)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+rwc.plot<- 
+  biomass.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = RWC, fill = treatment))+
+  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Relative Water Content",
+       x = NULL,
+       y = "RWC (%)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 1.2,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  ylim(NA, 1.3)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+rwc.plot
+
+#ggsave("rwc.plot.png",rwc.plot)
+
+```
+
+{{< pagebreak >}}
+
+### Aboveground biomass
+
+```{r}
+#| label: dry biomass
+
+
+#test for normality
+shapiro.test(biomass$dryweight) 
+#p-value = 0.003224,  so the data is not normally distributed and we must use
+#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+biomass.plot<- 
+  biomass.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = dryweight, fill = treatment))+
+  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Dry Biomass",
+       x = NULL,
+       y = "Dry Mass (g)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 1.2,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 1.3)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+biomass.plot
+
+#ggsave("biomass.plot.png",biomass.plot)
+```
+
+{{< pagebreak >}}
+
+### Leaf Number
+
+```{r}
+#| label: Leaf number
+
+
+#check for normality in plant height data
+shapiro.test(biometric$LeafNum) 
+#p-value << 0,05, non normal - need to do parametric test
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+leafnum.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = LeafNum, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Number of leaves per rosette",
+       x = NULL,
+       y = "Leaf Number")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(0, 25)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+#final leaf height plot
+leafnum.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+
+{{< pagebreak >}}
+
+### Live leaf number
+
+```{r}
+#| label: live leaf number
+#| echo: false
+
+#check for normality in plant height data
+shapiro.test(biometric$LiveLeaf) 
+#p-value << 0,05, non normal - need to do parametric test
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+liveleaf.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = LiveLeaf, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Number of live leaves per rosette",
+       x = NULL,
+       y = "Leaf Number")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  ylim(0, 25)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+liveleaf.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+
+{{< pagebreak >}}
+
+### Change in leaf number
+
+```{r}
+#| label: delta leaves
+
+#looking at the *change* in leaf number over time
+leaf.diff <- biometric.comp %>%
+  filter(drought != "d") %>% 
+  reframe(.by=c(time, ID, comparison), 
+          mean = mean(LeafNum), 
+          treatment = treatment) %>% 
+  unique() %>% 
+  pivot_wider(values_from = mean, names_from = time) %>% 
+  mutate(diff = T2-T1) %>% 
+  filter(is.na(diff)==F)
+
+#is it normally distributed?
+shapiro.test(leaf.diff$diff)
+#p-value <<< 0.05, non normal - non parametric tests here we come
+
+leafdiff.plot<- 
+  leaf.diff |>
+  ggplot(aes(x = treatment, y = diff, fill = treatment))+
+  geom_boxplot(data = leaf.diff|> dplyr::select(-comparison)|>unique(), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Change in leaves per rosette",
+       x = NULL,
+       y = "Number of Leaves")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     label.y = 5,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(0, 25)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+leafdiff.plot
+
+ #ggsave("leafdiff.plot.png",leafdiff.plot)
+
+```
+
+{{< pagebreak >}}
+
+### Rosette Diameter
+
+```{r}
+#| label: Rosette Diameter
+
+
+#check for normality in plant height data
+shapiro.test(biometric$diameter) 
+#p-value << 0,05, non normal - need to do parametric test
+
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+diam.plot<- 
+  biometric.comp |>
+  dplyr::filter(drought == "nd")|>
+  ggplot(aes(x = treatment, y = diameter, fill = treatment))+
+  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(title = "Rosette Diameter",
+       x = NULL,
+       y = "Diameter (mm)")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 22,
+                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(time~comparison, drop = TRUE)+
+  #ylim(0, 25)+
+  theme_bw( )+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
+
+diam.plot
+
+#ggsave("leafnum.plot.png",leafnum.plot)
+```
+
+# Supplementary Graphics
+
+Here we include some supplementary graphics, tables, and analyses for context.
+
+## ANOVA for Chlorophyll Fluorescence  {#sec-supp.anova}
+
+Above, @sec-anova (\@lst-psii.anova), we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of models explaining the response of chlorophyll fluorescence to our treatments using the case study of *PSII (Y)*. Below we show the ANOVA of the remaining responses tested. We see the same trend, where *D*, *pressure*, their interaction, and often even *time* don't increase the explanatory value of the models.
+
+```{r}
+#| label: all resp pressure v D anova
+#| echo: false
+#| message: false
+#| warning: false
+
+for(response in c("NPQ1", "ETR", "qE", "qP")){
+subset.pam <- pam |>
+  filter(light == "Lss")
+
+print(paste("ANOVA for", response))
+
+model <- lm(get(response) ~ irr + pressure + D + pressure*D + time,
+                        data = subset.pam)
+model.b<-lm(get(response) ~ irr + pressure + D + time,
+                        data = subset.pam)
+model.c<-lm(get(response) ~ irr + pressure + time,
+                        data = subset.pam)
+model.d<-lm(get(response) ~ irr + pressure,
+                        data = subset.pam)
+
+print(anova(model, model.b, model.c, model.d))}
+```
+
+## P-values for Chlorophyll Fluorescence graphs  {#sec-pvals.chlflo}
+
+```{r}
+#| label: p-values-for-chlorophyll-fluorescence
+#| echo: false
+#| message: false
+#| warning: false
+
+knitr::kable(
+  df_pvalues.psii,
+  caption = "Table S1. Pairwise p-values for PSII chlorophyll fluorescence."
+)|>
+  kable_styling(bootstrap_options = "striped")
+
+
+knitr::kable(
+  df_pvalues.npq,
+  caption = "Table S2. Pairwise p-values for non-photochemical quenching (NPQ)."
+)|>
+  kable_styling(bootstrap_options = "striped")
+
+knitr::kable(
+  df_pvalues.etr,
+  caption = "Table S3. Pairwise p-values for electron transport rate (ETR)."
+)|>
+  kable_styling(bootstrap_options = "striped")
+
+knitr::kable(
+  df_pvalues.qE,
+  caption = "Table S4. Pairwise p-values for energy-dependent quenching (qE)."
+)|>
+  kable_styling(bootstrap_options = "striped")
+
+knitr::kable(
+  df_pvalues.qP,
+  caption = "Table S5. Pairwise p-values for photochemical quenching (qP)."
+)|>
+  kable_styling(bootstrap_options = "striped")
+```
+## Chlorophyll Fluorescence - Unique Treatments
 
 ### PSII(Y)
 
@@ -628,21 +1607,17 @@ for(sampling_time in unique(pam.comp$time)){
     for(rad in unique(pam.comp$irr)){
       subset2 <- subset1|>
         filter(irr == rad)
-      
-      group1 = pull(pam.comp|>
-                      filter(comparison == comp, 
-                             irr==rad, 
-                             treatment == unique(subset2$treatment)[1])|>
+
+      group1 = pull(subset2|>
+                      filter(treatment == unique(subset2$treatment)[1])|>
                       dplyr::select(QY))
-      group2 = pull(pam.comp|>
-                      filter(comparison == comp, 
-                             irr==rad, 
-                             treatment == unique(subset2$treatment)[2])|>
+      group2 = pull(subset2|>
+                      filter(treatment == unique(subset2$treatment)[2])|>
                       dplyr::select(QY))
-      
+
       wtest <- wilcox.test(group1,group2)
-      
-      df_pvalues<-rbind(df_pvalues, 
+
+      df_pvalues<-rbind(df_pvalues,
                         data.frame(comp1 = unique(subset2$treatment)[1],
                                    comp2 = unique(subset2$treatment)[2],
                                    irr = rad,
@@ -662,7 +1637,7 @@ for(sampling_time in unique(pam.comp$time)){
 }
 
 #lets see what is significantly different:
-df_pvalues
+df_pvalues <- signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "QY", grouping_column = "treatment")
 
 #plot that summary!
 
@@ -672,6 +1647,8 @@ df_pvalues
 #                 #position = position_dodge(200))+  # 95% confidence error bars
 #   geom_point()+
 #   facet_grid(time~comparison, drop=T)
+
+psii.sum.plot <- base_plot2(psii.sum.comp, psii.sum, "irr", "QY", group = "treatment", colscale = "cols", facets = c("time", "comparison"), x.axis = "Light (uE)", type = "line", y.axis = "PSII (Y)", pvalues = df_pvalues )
 
 psii.sum.plot<- 
   psii.sum.comp |>
@@ -691,7 +1668,7 @@ psii.sum.plot<-
   geom_line()+
   geom_point()+
   geom_text(data=df_pvalues,
-            aes(x = irradiance,
+            aes(x = irr,
                 y = rep(c(0.7, 0.55, 0.35, 0.2, 0.15),8),
                 label = sig),
             colour = "black")+
@@ -699,12 +1676,11 @@ psii.sum.plot<-
        x = "Light (uE)",
        y = "Y(II)")+
   scale_color_manual(values= cols)+
-  facet_grid(time~comparison, drop = TRUE)+
+  facet_wrap(~time, drop = TRUE)+
   theme_bw( )+
     theme(legend.position = "bottom")
 psii.sum.plot
 ```
-
 
 {{< pagebreak >}}
 
@@ -758,37 +1734,37 @@ df_pvalues <- signif(pam.comp, "comparison", "NPQ1")
 
 #plot that summary!
 
-test_plot2 <- base_plot(npq.sum.comp, npq.sum, "irr", "NPQ1", group = "treatment", colscale = "cols", facets = c("time", "comparison"), x.axis = "Light (uE)", type = "scatterplot", y.axis = "NPQ", pvalues = df_pvalues )
+npq.sum.plot <- base_plot(npq.sum.comp, npq.sum, "irr", "NPQ1", group = "treatment", colscale = "cols", facets = c("time", "comparison"), x.axis = "Light (uE)", type = "line", y.axis = "NPQ", pvalues = df_pvalues )
 
-test_plot2
-
-npq.sum.plot<- 
-  npq.sum.comp |>
-  ggplot(aes(x = irr, y = NPQ1, colour = treatment))+
-  geom_line()+
-  geom_errorbar(data = npq.sum, 
-                color = "grey", 
-                aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
-                width = 0.1)+ 
-  geom_point(data = npq.sum, 
-                color = "grey", 
-                aes(x = irr, y = NPQ1))+
-  geom_errorbar(aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
-                width = 0.1)+ 
-  geom_point()+
-  geom_text(data=df_pvalues,
-            aes(x = irradiance,
-                y = rep(c(0.3, 1.1, 1.25, 0.2, 0.15),8),
-                label = sig),
-            colour = "black")+
-  labs(title = "Non-photochemical Quenching at end of Atinic Light Cycle",
-      x = "Light (uE)",
-      y = "NPQ")+
-  scale_color_manual(values= cols)+
-  facet_grid(time~comparison, drop = TRUE)+
-  theme_bw()+
-    theme(legend.position = "bottom")
 npq.sum.plot
+
+# npq.sum.plot<- 
+#   npq.sum.comp |>
+#   ggplot(aes(x = irr, y = NPQ1, colour = treatment))+
+#   geom_line()+
+#   geom_errorbar(data = npq.sum, 
+#                 color = "grey", 
+#                 aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
+#                 width = 0.1)+ 
+#   geom_point(data = npq.sum, 
+#                 color = "grey", 
+#                 aes(x = irr, y = NPQ1))+
+#   geom_errorbar(aes(ymin = NPQ1-ci, ymax = NPQ1+ci), 
+#                 width = 0.1)+ 
+#   geom_point()+
+#   geom_text(data=df_pvalues,
+#             aes(x = irradiance,
+#                 y = rep(c(0.3, 1.1, 1.25, 0.2, 0.15),8),
+#                 label = sig),
+#             colour = "black")+
+#   labs(title = "Non-photochemical Quenching at end of Atinic Light Cycle",
+#       x = "Light (uE)",
+#       y = "NPQ")+
+#   scale_color_manual(values= cols)+
+#   facet_grid(time~comparison, drop = TRUE)+
+#   theme_bw()+
+#     theme(legend.position = "bottom")
+# npq.sum.plot
 ```
 
 {{< pagebreak >}}
@@ -925,7 +1901,7 @@ qE.sum.plot<-
                 width = 0.1)+ 
   geom_point()+
   geom_text(data=df_pvalues,
-            aes(x = irradiance,
+            aes(x = irr,
                 y = rep(c(0.3, 1.1, 1.25, 1.25, 1.2),8),
                 label = sig),
             colour = "black")+
@@ -942,10 +1918,10 @@ qE.sum.plot
 
 {{< pagebreak >}}
 
-### 1 - qP - open PSII reaction centers
+### qP - open PSII reaction centers
 
 ```{r}
-#| label: 1 - qP
+#| label: qP
 
 shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(qP))
 
@@ -998,7 +1974,7 @@ qP.sum.comp <-
 
 df_pvalues <- data.frame(comp1 = as.character(),
                          comp2 = as.character(),
-                         irradiance = as.numeric(),
+                         irr = as.numeric(),
                          time = as.character(),
                          comparison = as.character(),
                          p.value = as.numeric()
@@ -1029,7 +2005,7 @@ for(sampling_time in unique(pam.comp$time)){
       df_pvalues<-rbind(df_pvalues, 
                         data.frame(comp1 = unique(subset2$treatment)[1],
                                    comp2 = unique(subset2$treatment)[2],
-                                   irradiance = rad,
+                                   irr = rad,
                                    time = sampling_time,
                                    comparison = comp,
                                    p.value = wtest$p.value,
@@ -1072,7 +2048,7 @@ qP.sum.plot<-
                 width = 0.1)+ 
   geom_point()+
   geom_text(data=df_pvalues,
-            aes(x = irradiance,
+            aes(x = irr,
                 y = rep(c(0.9, 0.75, 0.55, 0.3, 0.25),8),
                 label = sig),
             colour = "black")+
@@ -1144,7 +2120,7 @@ ETR.sum.comp <-
 
 df_pvalues <- data.frame(comp1 = as.character(),
                          comp2 = as.character(),
-                         irradiance = as.numeric(),
+                         irr = as.numeric(),
                          time = as.character(),
                          comparison = as.character(),
                          p.value = as.numeric()
@@ -1175,7 +2151,7 @@ for(sampling_time in unique(pam.comp$time)){
       df_pvalues<-rbind(df_pvalues, 
                         data.frame(comp1 = unique(subset2$treatment)[1],
                                    comp2 = unique(subset2$treatment)[2],
-                                   irradiance = rad,
+                                   irr = rad,
                                    time = sampling_time,
                                    comparison = comp,
                                    p.value = wtest$p.value,
@@ -1218,7 +2194,7 @@ ETR.sum.plot<-
                 width = 0.1)+ 
   geom_point()+
   geom_text(data=df_pvalues,
-            aes(x = irradiance,
+            aes(x = irr,
                 y = rep(c(0.9, 0.75, 90, 95, 0.25),8),
                 label = sig),
             colour = "black")+
@@ -1895,794 +2871,3 @@ for(sampling_time in unique(pam$Time)){
 ```
 
 {{< pagebreak >}}
-
-## Photosynthesis
-
-```{r}
-#| label: photosynthesis data cleaning
-#| include: false
-
-#### Data cleaning
-
-#working through to improve faceting
-#modifying dataframe for easier faceting
-
-walz.p <-
-  walz |>
-  mutate(comparison = paste0("P = ", as.character(pressure)))
-
-walz.d <-
-  walz |>
-  mutate(comparison = paste0("D = ", as.character(D)))
-
-walz.comp <-
-  walz.p|>
-  add_row(walz.d)
-```
-
-### Leaf temperature
-
-Comparing leaf temperature across treatments
-
-```{r}
-#| label: leaf temp
-
-#test for normality
-shapiro.test(walz$Tleaf) 
-#p-value = 0.052, so the data is (barely) normally distributed and we can use
-#parametric tests for our statistics
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-#base facet plot
-
-tleaf.plot<-
-  walz.comp |>
-  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
-  geom_boxplot(data = walz, color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Leaf Temperature",
-       x = NULL,
-       y = "Temperature °C")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method2, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-tleaf.plot
-#ggsave("tleaf.plot.png", tleaf.plot)
-```
-
-{{< pagebreak >}}
-
-### Internal : Ambient Carbon Concentration
-
-```{r}
-#| label: Ci:Ca
-
-#test for normality
-shapiro.test(walz$cica) 
-#p-value = 4.594e-07, so the data is not normally distributed and we can't use 
-#parametric tests for our statistics - so we will compare our data with the
-#wilcox test (`method3`) rather than a t-test.
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$cica)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(walz$cica)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-cica.plot<- 
-  walz.comp |>
-    filter(Drought==F,is.na(cica)==F)|>
-  ggplot(aes(x = treatment, y = cica, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(cica)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Internal to ambient carbon concentration",
-       x = NULL,
-       y = "Ci:Ca")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-cica.plot
-
-#save plot
-#ggsave("cica.plot.png", cica.plot)
-
-```
-
-{{< pagebreak >}}
-
-### Transpiration
-
-```{r}
-#| label: T
-
-shapiro.test(walz$E) 
-#p-value <<0.05, so the data is not normally distributed and we can't use 
-#parametric tests for our statistics. We'll use the wilcox test.
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$E)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(walz$E)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-e.plot<- 
-  walz.comp |>
-    filter(Drought==F,is.na(E)==F)|>
-  ggplot(aes(x = treatment, y = E, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(E)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_below, geom = "text", vjust = 1.15)+
-  labs(title = "Transpiration",
-       x = NULL,
-       y = "T [mmol/(m²*s)]")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom") +
-  coord_cartesian(clip = "off")
-
-
-
-#final leaf height plot
-e.plot
-
-#save plot
-#ggsave("e.plot.png", e.plot)
-```
-
-{{< pagebreak >}}
-
-### Stomatal Conductance
-
-```{r}
-#| label: Gs
-
-#check for normality
-shapiro.test(walz$GH2O) 
-#p-value << 0.05, so the data is not normally distributed and we can't use 
-#parametric tests for our statistics
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-gh2o.plot<- 
-  walz.comp |>
-    filter(Drought==F,is.na(GH2O)==F)|>
-  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Gas Exchange",
-       x = NULL,
-       y = "Gs [mmol H2O/(m²*s)]")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final gas exchange plot
-gh2o.plot
-
-#saveplot
-#ggsave("gh2o.plot.png", gh2o.plot)
-
-```
-
-We can compare this to the results from the last experiment:
-
-\begin{figure}[H]
-\centering
-\subfloat[D Gradient - Stomatal Conductance][Response to $D$ gradient.]{
-    \includegraphics[width=0.49\textwidth]{../../2024/Manuscript/pics/D Gradient/gh2o.whole.plot.png}
-    \label{fig:d.gs}}
-\subfloat[Pressure - Stomatal Conductance][Response to pressure.]{
-    \includegraphics[width=0.49\textwidth]{../../2024/Manuscript/pics/Pressure/gh2o.whole.plot.png}
-    \label{fig:p.gs}}
-\caption{Response of stomatal conductance in \textit{A. thaliana} to two different treatment types, data from both sampling times. Letters indicate significant differences based on post hoc tests (p $<$ 0.05).}
-\label{fig:gs}
-\end{figure}
-
-{{< pagebreak >}}
-
-### Assimilation Rate
-
-```{r}
-#| label: Assimilation Rate
-
-#check for normality
-shapiro.test(walz$A) 
-#p-value = 3324, so the data is normally distributed and we can use parametric 
-#tests for our statistics
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-A.plot<- 
-  walz.comp |>
-    filter(Drought==F,is.na(GH2O)==F)|>
-  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Assimilation Rate",
-       x = NULL,
-       y = "A [µmol/(m²*s)]")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final leaf height plot
-A.plot
-
-#ggsave("A.plot.png", A.plot)
-
-```
-
-{{< pagebreak >}}
-
-## Carbon content - C:N ratio
-
-```{r}
-#| label: Carbon content data cleaning
-#| include: false
-
-#### Data cleaning
-#modifying dataframe for easier faceting
-
-cn.p <-
-  cn |>
-  mutate(comparison = paste0("P = ", as.character(pressure)))
-
-cn.d <-
-  cn |>
-  mutate(comparison = paste0("D = ", as.character(D)))
-
-cn.comp <-
-  cn.p|>
-  add_row(cn.d)
-```
-
-### C:N Ratio
-
-```{r}
-#| label: C:N ratio
-
-#check for normality
-shapiro.test(cn$cn) 
-#p-value = .067, so the data is normally distributed and we can use parametric 
-#tests for our statistics
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(cn$cn)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(cn$cn)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-cn.plot<- 
-  cn.comp |>
-    filter(drought=="nd",is.na(cn)==F)|>
-  ggplot(aes(x = treatment, y = cn, fill = treatment))+
-  geom_boxplot(data = cn|> filter(drought=="nd", is.na(cn)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Carbon:Nitrogen Ratio",
-       x = NULL,
-       y = "C:N")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method2, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final leaf height plot
-cn.plot
-
-#save plot
-#ggsave("cn.plot.png", cn.plot)
-```
-
-{{< pagebreak >}}
-
-### d13C
-
-```{r}
-#| label: d13C
-
-#check for normality
-shapiro.test(abs(cn$C_discr)) 
-#p-value = 2.841e-05, so the data is not normally distributed and we cannot use parametric 
-#tests for our statistics
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-d13c.plot<- 
-  cn.comp |>
-    filter(drought=="nd",is.na(C_discr)==F)|>
-  ggplot(aes(x = treatment, y = C_discr, fill = treatment))+
-  geom_boxplot(data = cn|> filter(drought=="nd", is.na(C_discr)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "13C Discrimination",
-       x = NULL,
-       y = "d13C [per mil]",
-       subtitle =  "normalized to d13C of air in each chamber")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-
-#final leaf height plot
-d13c.plot
-
-#save plot
-#ggsave("d13C.plot.png", d13c.plot)
-
-
-```
-
-Here too we can compare our results to the previous experiment's "imperfect" results:
-
-\begin{figure}[H]
-    \centering
-    \subfloat[Response to $D$ gradient.]{
-        \includegraphics[width = 0.49\textwidth]{../../2024/Manuscript/pics/D Gradient/d13C.plot.png}
-        \label{fig:d.d13c}
-    }
-    \subfloat[Response to pressure.]{
-        \includegraphics[width = 0.49\linewidth]{../../2024/Manuscript/pics/Pressure/d13C.plot.png}
-        \label{fig:p.d13c}
-    }
-    \caption{Response of $\delta^{13}$C in \textit{A. thaliana} to two treatment types. Letters indicate significant differences based on post hoc tests (p $<$ 0.05).}
-    \label{fig:d13c}
-\end{figure}
-
-{{< pagebreak >}}
-
-## Biometric Data
-
-```{r}
-#| include: false
-#modifying dataframe for easier faceting
-
-biomass.p <-
-  biomass |>
-  mutate(comparison = paste0("P = ", as.character(pressure)))
-
-biomass.d <-
-  biomass |>
-  mutate(comparison = paste0("D = ", as.character(D)))
-
-biomass.comp <-
-  biomass.p|>
-  add_row(biomass.d)
-
-biometric.p <-
-  biometric |>
-  mutate(comparison = paste0("P = ", as.character(pressure)))
-
-biometric.d <-
-  biometric |>
-  mutate(comparison = paste0("D = ", as.character(D)))
-
-biometric.comp <-
-  biometric.p|>
-  add_row(biometric.d)
-
-```
-
-### Relative Water Content
-
-```{r}
-#| label: rwc
-#| echo: false
-
-#test for normality
-shapiro.test(biomass$RWC) 
-#p-value = 9.456e-11, so the data is not normally distributed and we must use
-#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(biomass$RWC)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(biomass$RWC)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-rwc.plot<- 
-  biomass.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = RWC, fill = treatment))+
-  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Relative Water Content",
-       x = NULL,
-       y = "RWC (%)")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 1.2,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  ylim(NA, 1.3)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-rwc.plot
-
-#ggsave("rwc.plot.png",rwc.plot)
-
-```
-
-{{< pagebreak >}}
-
-### Aboveground biomass
-
-```{r}
-#| label: dry biomass
-
-
-#test for normality
-shapiro.test(biomass$dryweight) 
-#p-value = 0.003224,  so the data is not normally distributed and we must use
-#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-biomass.plot<- 
-  biomass.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = dryweight, fill = treatment))+
-  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Dry Biomass",
-       x = NULL,
-       y = "Dry Mass (g)")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 1.2,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 1.3)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-biomass.plot
-
-#ggsave("biomass.plot.png",biomass.plot)
-```
-
-{{< pagebreak >}}
-
-### Leaf Number
-
-```{r}
-#| label: Leaf number
-
-
-#check for normality in plant height data
-shapiro.test(biometric$LeafNum) 
-#p-value << 0,05, non normal - need to do parametric test
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-leafnum.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = LeafNum, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Number of leaves per rosette",
-       x = NULL,
-       y = "Leaf Number")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final leaf height plot
-leafnum.plot
-
-#ggsave("leafnum.plot.png",leafnum.plot)
-```
-
-{{< pagebreak >}}
-
-### Live leaf number
-
-```{r}
-#| label: live leaf number
-#| echo: false
-
-#check for normality in plant height data
-shapiro.test(biometric$LiveLeaf) 
-#p-value << 0,05, non normal - need to do parametric test
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-liveleaf.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = LiveLeaf, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Number of live leaves per rosette",
-       x = NULL,
-       y = "Leaf Number")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-liveleaf.plot
-
-#ggsave("leafnum.plot.png",leafnum.plot)
-```
-
-{{< pagebreak >}}
-
-### Change in leaf number
-
-```{r}
-#| label: delta leaves
-
-#looking at the *change* in leaf number over time
-leaf.diff <- biometric.comp %>%
-  filter(drought != "d") %>% 
-  reframe(.by=c(time, ID, comparison), 
-          mean = mean(LeafNum), 
-          treatment = treatment) %>% 
-  unique() %>% 
-  pivot_wider(values_from = mean, names_from = time) %>% 
-  mutate(diff = T2-T1) %>% 
-  filter(is.na(diff)==F)
-
-#is it normally distributed?
-shapiro.test(leaf.diff$diff)
-#p-value <<< 0.05, non normal - non parametric tests here we come
-
-leafdiff.plot<- 
-  leaf.diff |>
-  ggplot(aes(x = treatment, y = diff, fill = treatment))+
-  geom_boxplot(data = leaf.diff|> dplyr::select(-comparison)|>unique(), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Change in leaves per rosette",
-       x = NULL,
-       y = "Number of Leaves")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 5,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-leafdiff.plot
-
- #ggsave("leafdiff.plot.png",leafdiff.plot)
-
-```
-
-{{< pagebreak >}}
-
-### Rosette Diameter
-
-```{r}
-#| label: Rosette Diameter
-
-
-#check for normality in plant height data
-shapiro.test(biometric$diameter) 
-#p-value << 0,05, non normal - need to do parametric test
-
-cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "non-significant,", "significant,"), 
-      "the data is", 
-      ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-diam.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = diameter, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Rosette Diameter",
-       x = NULL,
-       y = "Diameter (mm)")+
-  scale_fill_manual(values= cols)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  #ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-diam.plot
-
-#ggsave("leafnum.plot.png",leafnum.plot)
-```
