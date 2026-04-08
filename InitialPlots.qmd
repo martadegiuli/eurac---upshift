@@ -88,6 +88,8 @@ library(import)
 library(lme4)
 library(knitr)
 library(kableExtra)
+library(ggfortify)
+library(emmeans)
 
 #import functions:
 source("functions.R")
@@ -128,10 +130,14 @@ walz <- read_excel ("../Raw Data/photosynthesis_cal_2025.xlsx")|>
   dplyr::select(Date, Elevation, D, Drought, Tleaf, E, VPD, GH2O, A, ci, ca) |>  #select only columns that we need: leaf temp, evapotranspiration, VPD, Gas exchange, Absorbance, internal and external co2 concentration
   mutate(cica = abs(ci) / abs(ca),
          Tleaf = as.numeric(Tleaf),
-         pressure = case_when(
-           Elevation == 260 ~ 98,
-           Elevation == 4000 ~ 61
-         ),
+         pressure = factor(
+           case_when(
+             Elevation == 260  ~ 98,
+             Elevation == 4000 ~ 61
+           ),
+           levels = c(98, 61)
+         )
+         ,
          treatment = paste0(substr(Elevation,1,2), "D",D)
          )
 
@@ -204,13 +210,13 @@ pam <- read_csv("../RAW Data/PAM.csv") |>
 
 pam2024 <- read_csv("../RAW Data/PAM_2024.csv") |>
   mutate(D        = case_when(
-           treatment == "26_H50" ~ 10,
-           treatment == "26_H30" ~ 20,
-           treatment == "40_H50" ~ 20,
-           treatment == "40_H80" ~ 10),
+           treatment == "26_H50" ~ as.factor(10),
+           treatment == "26_H30" ~ as.factor(20),
+           treatment == "40_H50" ~ as.factor(20),
+           treatment == "40_H80" ~ as.factor(10)),
          pressure = case_when(
-           substr(treatment, 1, 2) == 26 ~ 98,
-           substr(treatment, 1, 2) == 40 ~ 61),
+           substr(treatment, 1, 2) == 26 ~ as.factor(98),
+           substr(treatment, 1, 2) == 40 ~ as.factor(61)),
          year     = as.factor(2024))
   
 ```
@@ -227,6 +233,8 @@ cols4 <- c("26D10" = "#fde725",
 
 cols2 <- c("98" = "#35b779", 
           "61" = "#440154")
+
+my.comps <- list(c("26D10", "26D20"), c("40D10", "40D20"), c("26D10", "40D10"), c("26D20", "40D20"))
 
 #methods for stat tests:
 method1 = "anova"
@@ -245,7 +253,7 @@ Before starting with the deeper analyses, it is important to check that our trea
 
 beakers.comp <- add_comp(beakers, "pressure", "D")
 
-shapiro.test(beakers$E) 
+shapiro.test(beakers$E)
 #p-value = 0.007278, thus < 0.05 and so the data is not normally distributed
 
 cat(paste("Since the p-value is", 
@@ -306,7 +314,7 @@ pam.comp <-
 
 ```
 
-### Aggregating- Humidities - Years?  {#sec-anova}
+### Aggregating- Humidities - Years? {#sec-anova}
 
 In previous discussions, we have spoken about the fact that humidity seems to have a much smaller impact on chlorophyll fluorescence values than pressure. To check whether this is true, we can compare four nested models:
 
@@ -611,72 +619,86 @@ qP.agg <- qP.agg |>
   ))
 
 
-qP.agg.plot <- base_plot2(qP.agg, xvals = "irr", yvals = "qP", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qP, y.axis = "qP", x.axis = "Light (uE)")
+qP.agg.plot <- base_plot2(qP.agg, xvals = "irr", yvals = "qP", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qP, y.axis = "qP", x.axis = "Light (uE)", colscale = "cols2")
 
 qP.agg.plot
 ```
 
+## Photosynthesis {#sec-photosynthesis}
 
-## Photosynthesis
+Here too we could use an anova test to see whether each element we are looking at is fundamental for the explanation of the the variability in our data.
+
+We will first take the example of assimilation rate, comparing the following three nested models:
+
+a)  assimilation \~ pressure
+
+b)  assimilation \~ pressure + D
+
+c)  assimilation \~ pressure + D + pressure\*D
 
 ```{r}
-#| label: photosynthesis data cleaning
-#| include: false
+#| label: phot pressure v D anova
+#| echo: false
+#| message: false
+#| warning: false
+#| lst-cap: photosynthesis anova
+#| lst-label: lst-A.anova
 
-#### Data cleaning
+assim.model.c <- lm(A ~ pressure + D + pressure*D,
+                        data = walz)
+assim.model.b <- lm(A ~ pressure + D,
+                        data = walz)
+assim.model.a <- lm(A ~ pressure,
+                    data = walz)
 
-#working through to improve faceting
-#modifying dataframe for easier faceting
+autoplot(assim.model.c) # we can use these models *normal q-q along the normality line
 
-walz.p <-
-  walz |>
-  mutate(comparison = paste0("P = ", as.character(pressure)))
+anova(assim.model.c) #most of the variance explained only by pressure
+anova(assim.model.a, assim.model.b, assim.model.c) #double check comparing all three models
 
-walz.d <-
-  walz |>
-  mutate(comparison = paste0("D = ", as.character(D)))
-
-walz.comp <-
-  walz.p|>
-  add_row(walz.d)
 ```
+From the first anova looking just at the most complex model - we can see that a large marjority of the variance (~94.4%) is explained simply by pressure. The other two effects (_D_ and the interaction between _pressure_ and _D_) don't have a significant impact on the model. This is further supported by the anova comparing the 3 models, where we see no loss in explanatory power with the removal of _D_ and the interaction.
 
-### Leaf temperature
+We know that all these measurements depend on temperature as well and in @sec-leaftemp we show the leaf temperature data - which varies from a high of 25.0°C to 24.55°C across treatments.
 
-Comparing leaf temperature across treatments
+
+### Aggregated Assimilation Rate
 
 ```{r}
-#| label: leaf temp
+#| label: Assimilation Rate
 
-#test for normality
-shapiro.test(walz$Tleaf) 
-#p-value = 0.052, so the data is (barely) normally distributed and we can use
-#parametric tests for our statistics
+#check for normality
+shapiro.test(walz$A) 
+#p-value = 0.3324, so the data is normally distributed and we can use parametric 
+#tests for our statistics
 
 cat(paste("Since the p-value is", 
-      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "non-significant,", "significant,"), 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
       "the data is", 
-      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
 
-#base facet plot
 
-tleaf.plot<-
+base_plot2(walz, xvals = "pressure", yvals = "A", group = "pressure", colscale = "cols2", type = "boxplot", y.axis = "Assimilation Rate [umol/m2s]")
+
+A.plot<- 
   walz.comp |>
-  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
-  geom_boxplot(data = walz, color = "grey",fill = "grey")+ 
+    filter(Drought==F,is.na(A)==F)|>
+  ggplot(aes(x = treatment, y = A, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(A)==F), color = "grey",fill = "grey")+ 
   geom_boxplot()+
   geom_jitter(width=0.01)+
-  labs(title = "Leaf Temperature",
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Assimilation Rate",
        x = NULL,
-       y = "Temperature °C")+
+       y = "A [µmol/(m²*s)]")+
   scale_fill_manual(values= cols)+
-  stat_compare_means(method = method2, 
+  stat_compare_means(method = method3, 
                      label = "p.signif",
                      #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
+                     label.x.npc = c(0.7, 0.25, 0.2, 0)
   )+
-  stat_compare_means(method = method2, 
+  stat_compare_means(method = method3, 
                      label = "p.format",
                      label.y.npc = "bottom"
   )+
@@ -687,11 +709,98 @@ tleaf.plot<-
         axis.ticks.x = element_blank(), 
         legend.position = "bottom")
 
-tleaf.plot
-#ggsave("tleaf.plot.png", tleaf.plot)
+#final leaf height plot
+A.plot
+
+#ggsave("A.plot.png", A.plot)
+
 ```
 
-{{< pagebreak >}}
+### ANOVAs for Photosynthesis {#sec-supp.photanova}
+
+Above, we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of the response of assimilation. We run into some issues with other photosynthetic responses as shown below.
+
+```{r}
+#| label: all resp pressure v D anova
+#| echo: false
+#| message: false
+#| warning: false
+
+for(response in c("cica", "E", "GH2O")){
+
+  cat(paste("\n ANOVA for", response," \n \n"))
+
+model.c <- lm(get(response) ~ pressure + D + pressure*D,
+                        data = walz)
+model.b <- lm(get(response) ~ pressure + D,
+                        data = walz)
+model.a <- lm(get (response) ~ pressure,
+                    data = walz)
+
+autoplot(model.c) # just a check that a gaussian model is correct for this 
+
+print(anova(model.a, model.b, model.c))
+
+print(anova(model.c)) # if we want to look more closely}
+```
+What we observe here is that the interaction between _D_ and _pressure_ is fundamental in being able to explain our results for the remaining responses. Importantly (seen in the ANOVAs for the individual best-fit model) we see that _D_ has no impact by itself, rather it modulates the impact of _pressure_. Moving forward, we can't aggregate for pressure, rather we should try to understand how _D_ and _pressure_ interact, looking at the slope of the interaction.
+
+```{r}
+#| warning: false
+
+#modify pressure and D in walz dataframe to be able to use them correctly in the lm
+walz_f <- walz|>
+  mutate(pressure_n = as.numeric(as.character(pressure)),
+         D_f = factor(D, levels = c(10,20)))
+
+
+# Fit interaction model with raw pressure
+model.GH2O <- lm(GH2O ~ pressure_n * D_f, data = walz_f)
+
+plot.GH2O <- plot_interaction_ci(
+  data = walz_f,
+  model = model.GH2O,
+  y_var = "GH2O",
+  x_label = "Pressure [kPa]"
+)
+
+
+model.cica <- lm(cica ~ pressure_n * D_f, data = walz_f)
+
+plot.cica <-plot_interaction_ci(
+  data = walz_f,
+  model = model.cica,
+  y_var = "cica",
+  x_label = "Pressure [kPa]"
+)
+
+model.E <- lm(E ~ pressure_n * D_f, data = walz_f)
+
+plot.E <- plot_interaction_ci(
+  data = walz_f,
+  model = model.E,
+  y_var = "E",
+  y_label = "Transpiration",
+  x_label = "Pressure [kPa]"
+)
+
+arranged = ggarrange(plot.GH2O, plot.cica, plot.E, common.legend =T, legend = "bottom")
+arranged
+```
+
+
+```{r}
+#| label: photosynthesis data cleaning
+#| include: false
+
+#### Data cleaning
+
+#working through to improve faceting
+#modifying dataframe for easier faceting
+
+walz.comp <- add_comp(walz, "pressure", "D")
+
+```
 
 ### Internal : Ambient Carbon Concentration
 
@@ -1469,7 +1578,7 @@ diam.plot
 
 Here we include some supplementary graphics, tables, and analyses for context.
 
-## ANOVA for Chlorophyll Fluorescence  {#sec-supp.anova}
+## ANOVA for Chlorophyll Fluorescence {#sec-supp.anova}
 
 Above, @sec-anova (\@lst-psii.anova), we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of models explaining the response of chlorophyll fluorescence to our treatments using the case study of *PSII (Y)*. Below we show the ANOVA of the remaining responses tested. We see the same trend, where *D*, *pressure*, their interaction, and often even *time* don't increase the explanatory value of the models.
 
@@ -1497,7 +1606,7 @@ model.d<-lm(get(response) ~ irr + pressure,
 print(anova(model, model.b, model.c, model.d))}
 ```
 
-## P-values for Chlorophyll Fluorescence graphs  {#sec-pvals.chlflo}
+## P-values for Chlorophyll Fluorescence graphs {#sec-pvals.chlflo}
 
 ```{r}
 #| label: p-values-for-chlorophyll-fluorescence
@@ -1536,6 +1645,7 @@ knitr::kable(
 )|>
   kable_styling(bootstrap_options = "striped")
 ```
+
 ## Chlorophyll Fluorescence - Unique Treatments
 
 ### PSII(Y)
@@ -2208,666 +2318,101 @@ ETR.sum.plot<-
 ETR.sum.plot
 ```
 
-```{r}
-#| eval: false
-#| include: false
-#####
-# Note: If we compare estimates of the same coeffs from samples of different 
-# populations, we can indicate statistical significance if CIs don't overlap, 
-# but not robustly say that there is no difference if they do.
-#####
+## Leaf temperature {#sec-leaftemp}
 
-#looking at some significance
-
-#A Note: We cannot compare individual models pairwise with an ANOVA as it abuses
-#the assumption of the F-test that they are nested and fitted to the same data.
-#THUS we will compare the model fitted to the _whole_ data set compared to the
-#same model fitted for each group to see if there is a statistical difference
-#between groups. If this returns positive, we will look at the alpha parameter
-#individually - the one defining the shape of the curve, using the CI interval
-#generated by nls().
-
-#convert treatments to factors
-pam.factor <- pam.comp %>% mutate(treatment = as.factor(treatment))
-
-#create frames to fill in for loop with ci overlaps
-psii.overlap <- data.frame(pair = character(),
-                           overlap = logical(),
-                           time = character())
-
-psii.cld <- data.frame(treatment = character(),
-                       comparison = character(),
-                       letter = character(),
-                       time = character())
-
-#initiate data frame to store parameter value and confidence intervals
-psii.alpha <- data.frame(treatment = character(),
-                         est = numeric(),
-                         low = numeric(),
-                         high = numeric(),
-                         stringsAsFactors = FALSE)
-
-for(comp in unique(pam.comp$comparison)){
-  subset <- pam.factor |>
-    filter(comparison == comp)|>
-    droplevels()
-  
-  for(sampling_time in unique(pam$time)){
-    #first lets understand if there is a difference between treatments
-    treat1<-nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
-                data = subset(subset, time == sampling_time & treatment == unique(subset$treatment)[1]),
-                start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
-    
-    treat2<-nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
-                data = subset(subset, time == sampling_time & treatment == unique(subset$treatment)[2]),
-                start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
-    
-    # treat2<-nls(QY ~ Pmin[treatment] + Pmax[treatment] * (exp(-alpha[treatment] * irr/Pmax[treatment])),
-    #                 data = subset(subset, time == sampling_time, treatment = unique(subset$treatment)[2]),
-    #                 start = list(Pmin =  rep(0.06, 2), 
-    #                              alpha = rep(0.001, 2), 
-    #                              Pmax =  rep(0.8, 2)))
-    
-    #compare the coefficients of the two models using the function above
-    coeffs1 <- data.frame(coef(summary(treat1)))
-    coeffs2 <- data.frame(coef(summary(treat2)))
-    
-    df <- compare_coefs(coeffs1, coeffs2)
-    p_value <-df$`p.value`
-    
-    if (any (p_value > 0.05)) {
-      cat("Non-significant result (p =", p_value, ") at", sampling_time, "for", comp,". Adding all `a´s and moving on to next Time.\n")
-      psii.cld <- rbind(psii.cld,
-                        data.frame(
-                          treatment = unique(subset$treatment),
-                          comparison = comp,
-                          group = rep("a",length(unique(subset$treatment))),
-                          time = sampling_time
-                        ))
-      next
-    }
-    else{
-      cat("Significant ANOVA result (p =", p_value, ") at", sampling_time, ". Continuing loop to look at pairwise comparisions of treatments. \n")
-    }
-    
-    for(treat in unique(subset$treatment)){
-      
-      #nonlinear least squares approx of the extracted treatment
-      treat.nls <- nls(QY ~ Pmin + Pmax * (exp(-alpha*irr/Pmax)),
-                       data = subset(subset, 
-                                     time == sampling_time & treatment == treat),
-                       start = list(Pmin =  0.06, alpha = 0.001, Pmax =  0.8))
-      
-      #store values of alpha
-      psii.alpha <- rbind(psii.alpha, data.frame(
-        treatment = treat, 
-        comparison = comp,
-        alpha = coef(treat.nls)[2],
-        low = confint(treat.nls)[2,1],
-        high = confint(treat.nls)[2,2],
-        time = sampling_time))
-      
-    }
-    psii.overlap <- rbind(psii.overlap,
-                          cbind(compare_param(subset(psii.alpha, time == sampling_time)),
-                                time = sampling_time))
-    dif <- !subset(psii.overlap, time == sampling_time)$overlap
-    names <- subset(psii.overlap, time == sampling_time)$pair
-    names(dif) <- names
-    dif.letters <- multcompLetters(dif)
-    
-    psii.cld <- rbind(psii.cld,
-                      data.frame(
-                        treatment = names(dif.letters$Letters),
-                        comparison = comp,
-                        group = dif.letters$Letters,
-                        time = sampling_time
-                      ))
-    
-  }}
-
-psii.overlap
-
-psii.cld
-
-psii.alpha
-
-```
+The measurements shown in @sec-photosynthesis are temperature dependent. Here we show the leaf temperature data during the measurements. 
 
 ```{r}
-#| eval: false
-#| include: false
-##for loop to create model and plot data + model with confidence interval
+#| label: leaf temp
 
-#create a list to store model fit summaries
-fit.sum <- list()
-all.fit <- list()
+#test for normality
+shapiro.test(walz$Tleaf) 
+#p-value = 0.052, so the data is (barely) normally distributed and we can use
+#parametric tests for our statistics
 
-#loop for sampling time
-for(sampling_time in unique(PAM$time)){
-  plot.list <- list() #creates list to store T1 + T2 plots
-  
-  param_estimates <- data.frame(Treatment = character(), 
-                                Pmax = numeric(), 
-                                alpha = numeric(),
-                                Pmin = numeric(),
-                                stringsAsFactors = FALSE)
-  
-  print(paste("Following analyses are for time", sampling_time))
-  
-  for(treat in unique(PAM$treatment)){
-    #subset data for current treatment + sampling time
-    pam.sub <- subset(PAM,
-                      treatment == treat & time == sampling_time,
-                      select = c(irr, QY))
-    
-    #fit the model
-    print(paste (treat, "at", sampling_time))
-    print(head(pam.sub))
-    print(paste("Max PSII is:", max(pam.sub$QY), "and min PSII is:", min(pam.sub$QY)))
-    fit <- nlsLM(QY ~ SSexpDecay(irr, Pmax, alpha, Pmin),
-             data = pam.sub,
-             trace = T)
-    
-    #was this a success?
-    if(inherits(fit, "try-error")){
-      cat("Better luck next time, error fitting model for", treat, "at", sampling_time, "\n")
-      next
-    }
-    
-    #extract parameters
-    params <- coef(fit)
-    param_estimates <- rbind(param_estimates, 
-                             data.frame(treatment = treat, 
-                                        Pmax = params["Pmax"], 
-                                        alpha = params["alpha"],
-                                        Pmin = params["Pmin"]))
-    
-    #store that summary!
-    fit.sum[[paste(treat, sampling_time, sep = "_")]] <- summary(fit)
-    
-    #store the model!
-    all.fit[[paste(treat, sampling_time, sep = "_")]] <- fit
-    
-    #predictions + confidence intervals
-    irradiance_seq <- seq(min(pam.sub$irr), 
-                          max(pam.sub$irr),
-                          length.out = 100)
-    
-     # Generate predictions using the fitted model
-    pred <- predict2_nls(fit,
-                    newdata = data.frame(irr = irradiance_seq),
-                    interval = "conf",
-                    level = 0.95)
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
 
-    pred.df<- data.frame(treatment = treat,
-                      irr= irradiance_seq, 
-                      fit = pred[,1], 
-                      lwr = pred[,3], 
-                      upr = pred[,4])
+#base facet plot
 
-    
-    # add prediction data to plot list
-    plot.list[[treat]] <- pred.df
-  }
-  
-  #what about comparing these models?
+tleaf.plot <- walz|>
+  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  labs(x = NULL,
+       y = "Temperature [°C]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(comparisons = my.comps,
+                     label = "p.signif",
+                     method = method2,
+                     label.y = c(24.9, 24.9, 25,25.07),
+                     paired = F
+  )+
+  stat_compare_means(label.y = 24.6,
+                     label.x.npc = "middle")+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
 
-  #combine all predictions for current sampling time
-  combined_pred <- do.call(rbind, plot.list) %>% 
-    dplyr::mutate(treatment = as.character(treatment))
-  
-  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
-  ci.point <- summarySE(data = subset(PAM, time == sampling_time),
-                        "QY",
-                        groupvars = c("treatment", "irr")) %>% 
-    mutate(treatment = as.character(treatment))
-  
-  #plooooot! note: this is for one sampling time at a time
-  p <- ggplot()+
-    geom_errorbar(data = ci.point, 
-                  aes(x = irr,
-                      ymin = QY-sd, ymax = QY+sd,
-                      color = treatment), 
-                              width = 0.1, 
-                              position = position_dodge(150))+  # 95% confidence error bars
-    geom_point(data = ci.point,
-               aes(x= irr, y = QY, color = treatment),
-               position = position_dodge(150))+
-    geom_ribbon(data = combined_pred,
-                aes(x=irr, ymin =lwr, ymax=upr, fill= treatment),
-                alpha = 0.2)+
-    geom_line(data = combined_pred,
-               aes (x = irr, y= fit, color = treatment))+
-    # annotate(geom = "text", x = 3000, y= 0.57, color = "#5ec962",
-    #          label = bquote(alpha[101]~"="~ .(round(subset(param_estimates, treatment == 101)$alpha, digits = 6))))+
-    # annotate(geom = "text", x = 3000, y= 0.52, color = "#3b528b",
-    #          label = bquote(alpha[60]~"="~ .(round(subset(param_estimates, treatment == 60)$alpha, digits = 6))))+
-    # annotate(geom = "text", x= 3500, y = 0.575, label = subset(psii.cld, time == sampling_time & treatment == 101)$group)+
-    # annotate(geom = "text", x= 3500, y = 0.525, label = subset(psii.cld, time == sampling_time & treatment == 60)$group)+
-    labs(title = paste("Chlorophyll Fluorescence at", sampling_time),
-         x = "Irradiance",
-         y = "Chlorophyll Fluorescence Y(PSII)")+
-    # scale_fill_manual(values = c("#3b528b","#5ec962"),
-    #                   labels = c("60","101"))+
-    # scale_color_manual(values = c("#3b528b", "#5ec962"),
-    #                    labels = c("60", "101"))+
-    ylim(0,0.9)+
-    theme_minimal()+
-    theme(legend.position = "bottom")
-  
-  #print baby print
-  print(p)
-  #ggsave(paste("psii_",sampling_time,".png"),p, bg = "white")
-}
-
+tleaf.plot
 ```
+
+## Photosynthesis - Unique Treatments
+
+### Assimilation Rate
 
 ```{r}
-#| eval: false
-#| include: false
+#| label: Assimilation Rate
 
-## Y(NO) [fluorescence + dissipated heat]= Y(FD) ----
-#the sum of the fluorescence and constitive heat dissipation  (i.e. 1 - (Y(PSII) + Y(NPQ)))
+walz.comp <- add_comp(walz, "pressure", "D")
 
-## We cannot compare this data using a clean logistic model because of the expected peak
-## at 100 umol Irradiance. Thus we have to compare the values of the peaks + the 
-## values of the saturation levels.
+#check for normality
+shapiro.test(walz$A) 
+#p-value = 0.3324, so the data is normally distributed and we can use parametric 
+#tests for our statistics
 
-#finding significances
-#for Y(NO) this is looking at the "peak" and saturation values - 
-#i.e. normal anova comparisons (as long as the data is normally distributed)
-
-yno.values <- pam %>% 
-  dplyr::select(Irradiance, YNO, Time, Treatment) %>% 
-  dplyr::filter(Irradiance==100 | Irradiance == 4500) %>%
-  dplyr:: summarise(.by = c(Time, Irradiance, Treatment), value = mean(YNO)) %>% 
-  pivot_wider(names_from = Irradiance, values_from = value) %>% 
-  dplyr::rename(peak = `100`, saturation = `4500`)
-
-for(irr in c("100", "4500")){
-  if(irr == "100"){
-    temp.group<-data.frame(Treatment = factor(),
-                           Time = character(),
-                           peak.group = character())
-  }else{
-    temp.group <- data.frame(Treatment = factor(),
-                             Time = character(),
-                             sat.group = character())
-  }
-  for(sampling_time in unique(pam$Time)){
-    
-    sub<-subset(pam, Time == sampling_time & Irradiance == as.numeric(irr))
-    
-    cat("Looking at the values at", sampling_time, "for irradiance =", irr,"\n")
-
-    #check if data is normally distributed
-    norm<-shapiro.test(sub$YNO)
-    
-    if(norm$p.value > 0.05){
-      cat("The data is normally distributed, go on. \n")
-      
-      #perform tukey post hoc on data
-      hsd <-HSD.test(aov(YNO~Treatment, data = sub), "Treatment", group = T)
-      print(hsd$groups)
-      
-      sub.group <- subset(rownames_to_column(hsd$groups, "Treatment"),
-                          select = c(Treatment, groups))
-      group.name<- colnames(temp.group)[3]
-      
-      #store data in `temp.group` dataframe
-      temp.group <- rbind(temp.group,
-                          data.frame(Treatment = sub.group$Treatment,
-                                     Time = sampling_time,
-                                     groups = sub.group$groups) %>% 
-                            dplyr::rename(!!group.name := groups))
-      
-    }else{
-      cat("The data is not normally distributed. How can we transform it? \n")
-      
-      loglike<-boxcox(YNO~Treatment, data = sub, plotit = F) #saves boxcox power transformation log-likelyhoods
-      trans<-loglike$x[which(loglike$y == max(loglike$y))]   #extracts the lambda vector (i.e. transformation) for the highest likelyhood (of normality)
-      cat("We need to use a", trans , "power transformation to have a normally distributed dataset. 
-        The following analyses will be done with said transformation on the data.\n")
-      
-      norm2<-shapiro.test(sub$YNO^trans)
-      if(norm2$p.value > 0.05){
-        cat("We now have a normally distributed (transformed) dataset. \n")
-        
-        #perform tukey post hoc on transformed data
-        hsd <-HSD.test(aov(YNO^trans~Treatment, data = sub), "Treatment", group = T)
-        print(hsd$groups)
-        
-        
-        sub.group <- subset(rownames_to_column(hsd$groups, "Treatment"),
-                            select = c(Treatment, groups))
-        group.name<- colnames(temp.group)[3]
-        
-        #store data in `temp.group` dataframe
-        temp.group <- rbind(temp.group,
-                            data.frame(Treatment = sub.group$Treatment,
-                                       Time = sampling_time,
-                                       groups = sub.group$groups) %>% 
-                              dplyr::rename(!!group.name := groups))
-        
-      }else{
-        cat("Be sad")
-        break
-      }
-    }
-  }
-  yno.values<-yno.values %>% 
-    left_join(temp.group)
-}
-
-##for loop to plot data with confidence interval
-
-#loop for sampling time
-for(sampling_time in unique(pam$Time)){
-  plot.list <- list() #creates list to store T1 + T2 plots
-  
-    print(paste("Following analyses are for time", sampling_time))
-  
-  for(treat in unique(pam$Treatment)){
-    #subset data for current treatment + sampling time
-    pam.sub <- subset(pam,
-                      Treatment == treat & Time == sampling_time,
-                      select = c(Irradiance, YNO))
-    
-    #fit the model
-    print(paste (treat, "at", sampling_time))
-    print(head(pam.sub))
-    print(paste("Saturation YNO is:", max(pam.sub$YNO), "and peak YNO is:", max(subset(pam.sub, Irradiance == 100,)$YNO)))
-  }
-
-  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
-  ci.point <- summarySE(data = subset(pam, Time == sampling_time),
-                        "YNO",
-                        groupvars = c("Treatment", "Irradiance"))
-  
-  #plooooot! note: this is for one sampling time at a time
-  p <- ggplot(data = ci.point)+
-    geom_errorbar(aes(x = Irradiance,
-                      ymin = YNO-sd, ymax = YNO+sd,
-                      color = Treatment), 
-                  width = 0.1, 
-                  position = position_dodge(100))+  # 95% confidence error bars
-    geom_point(aes(x= Irradiance, y = YNO, color = Treatment),
-               position = position_dodge(100))+
-    geom_line(aes(x = Irradiance,
-                  y = YNO, 
-                  color = Treatment))+
-    #add Asymptote annotation
-    annotate(geom = "text", x = 3500, y= 0.30, color = "#3b528b",
-             label = bquote("Y(NO)"[sat*~60]~"="~ .(round(subset(yno.values, Treatment == 60& Time == sampling_time)$saturation, digits = 3))))+
-    annotate(geom = "text", x = 3500, y= 0.29, color = "#5ec962",
-             label = bquote("Y(NO)"[sat*~101]~"="~ .(round(subset(yno.values, Treatment == 101& Time == sampling_time)$saturation, digits = 3))))+
-    annotate(geom = "text", x= 4000, y = 0.301, label = subset(yno.values, Time == sampling_time & Treatment == 60)$sat.group)+
-    annotate(geom = "text", x= 4000, y = 0.291, label = subset(yno.values, Time == sampling_time & Treatment == 101)$sat.group)+
-    #add "peak" annotation
-    annotate(geom = "text", x = 250, y= 0.325, color = "#3b528b",
-             label = bquote("peak"[60]~"="~ .(round(subset(yno.values, Treatment == 60& Time == sampling_time)$peak, digits = 3))))+
-    annotate(geom = "text", x = 250, y= 0.315, color = "#5ec962",
-             label = bquote("peak"[101]~"="~ .(round(subset(yno.values, Treatment == 101& Time == sampling_time)$peak, digits = 3))))+
-    annotate(geom = "text", x= 750, y = 0.326, label = subset(yno.values, Time == sampling_time & Treatment == 60)$peak.group)+
-    annotate(geom = "text", x= 750, y = 0.316, label = subset(yno.values, Time == sampling_time & Treatment == 101)$peak.group)+
-    scale_fill_manual(values = c("#3b528b","#5ec962"))+
-    scale_color_manual(values = c("#3b528b","#5ec962"))+
-    labs(title = paste("Fluorescence and Heat Dissipation at", sampling_time),
-         x = "Irradiance",
-         y = "Y(NO)",
-         color = "Air Pressure (kPa)",
-         fill = "Air Pressure (kPa)")+
-    theme_minimal()+
-    theme(legend.position = "bottom")
-  
-  #print baby print
-  print(p)
-  ggsave(paste("yno_",sampling_time,".png"),p, bg = "white")
-  }
-
-##Non-photochemical Quenching Y(NPQ)----
-## We can look at this data using  a asymptotic model (yay!).
-
-#summarize the data by treatment/irradiance using function established at the beginning of code
-ynpq.sum <- summarySE(data = pam, "YNPQ", groupvars = c("Treatment", "Irradiance"))
-
-#plot that summary!
-
-ggplot(ynpq.sum, aes(x=Irradiance, y=YNPQ, colour = Treatment))+
-  geom_errorbar(aes(ymin = YNPQ-ci, ymax = YNPQ+ci), 
-                width = 0.1, 
-                position = position_dodge(150))+  # 95% confidence error bars
-  geom_point(position = position_dodge(150))
+cat(paste("Since the p-value is", 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
+      "the data is", 
+      ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+             "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
 
 
-#####
-# Note: If we compare estimates of the same coeffs from samples of different 
-# populations, we can indicate statistical significance if CIs don't overlap, 
-# but not robustly say that there is no difference if they do.
-#####
+A.plot<- 
+  walz.comp |>
+    filter(Drought==F,is.na(A)==F)|>
+  ggplot(aes(x = treatment, y = A, fill = treatment))+
+  geom_boxplot(data = walz|> filter(Drought==F, is.na(A)==F), color = "grey",fill = "grey")+ 
+  geom_boxplot()+
+  geom_jitter(width=0.01)+
+  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
+  labs(title = "Assimilation Rate",
+       x = NULL,
+       y = "A [µmol/(m²*s)]")+
+  scale_fill_manual(values= cols)+
+  stat_compare_means(method = method3, 
+                     label = "p.signif",
+                     #label.y = 3.05,
+                     label.x.npc = c(0.7, 0.25, 0.2, 0)
+  )+
+  stat_compare_means(method = method3, 
+                     label = "p.format",
+                     label.y.npc = "bottom"
+  )+
+  facet_grid(~comparison, drop = TRUE)+
+  #ylim(NA, 3.1)+
+  theme_bw( )+
+    theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), 
+        legend.position = "bottom")
 
-#looking at some significance
+#final leaf height plot
+A.plot
 
-#A Note: We cannot compare individual models pairwise with an ANOVA as it abuses
-#the assumption of the F-test that they are nested and fitted to the same data.
-#THUS we will compare the model fitted to the _whole_ data set compared to the
-#same model fitted for each group to see if there is a statistical difference
-#between groups. If this returns positive, we will look at the alpha parameter
-#individually - the one defining the shape of the curve, using the CI interval
-#generated by nls().
-
-#convert treatments to factors
-pam.factor <- pam %>% mutate(Treatment = as.factor(Treatment))
-
-#create frames to fill in for loop with ci overlaps
-ynpq.overlap <- data.frame(pair = character(),
-                           overlap = logical(),
-                           time = character())
-
-ynpq.cld <- data.frame(treatment = character(),
-                       letter = character(),
-                       time = character())
-
-
-#initiate data frame to store parameter value and confidence intervals
-ynpq.lrc <- data.frame(treatment = character(),
-                       est = numeric(),
-                       low = numeric(),
-                       high = numeric(),
-                       time = character(),
-                       stringsAsFactors = FALSE)
-
-
-for(sampling_time in unique(pam$Time)){
-  #first lets understand if there is a difference between treatments
-  no.treats<-nls(YNPQ ~ Asym*(1 - exp(-exp(lrc)*Irradiance)),
-                 data = subset(pam.factor, Time == sampling_time),
-                 start = list(Asym =  max(pam.factor$YNPQ), lrc = -6.17))
-  
-  all.treats<-nls(YNPQ ~ Asym[Treatment]*(1 - exp(-exp(lrc[Treatment])*Irradiance)),
-                  data = subset(pam.factor, Time == sampling_time),
-                  start = list(Asym =  rep(max(pam.factor$YNPQ), 2), 
-                               lrc = rep(-6.17, 2)))
-  
-  time.anova<- anova(no.treats, all.treats)
-  p_value <- time.anova$`Pr(>F)`[2]
-  
-  if (p_value > 0.05) {
-    cat("Non-significant ANOVA result (p =", p_value, ") at", sampling_time, ". Adding `a´s and moving to next Time.\n")
-    ynpq.cld <- rbind(ynpq.cld,
-                      data.frame(
-                        treatment = unique(pam$Treatment),
-                        group = rep("a",length(unique(pam$Treatment))),
-                        time = sampling_time
-                      ))
-    next
-  }
-  else{
-    cat("Significant ANOVA result (p =", p_value, ") at", sampling_time, ". Continuing loop to look at pairwise comparisions of treatments. \n")
-  }
-
-  for(treat in unique(pam$Treatment)){
-    
-    #nonlinear least squares approx of the extracted treatment
-    treat.nls <- nls(YNPQ ~ Asym*(1 - exp(-exp(lrc)*Irradiance)),
-                     data = subset(pam.factor, 
-                                   Time == sampling_time & Treatment == treat),
-                     start = list(Asym =  max(pam.factor$YNPQ), lrc = -6.17))
-    
-    #store values of alpha
-    ynpq.lrc <- rbind(ynpq.lrc, data.frame(
-      treatment = treat, 
-      lrc = coef(treat.nls)[2],
-      low = confint(treat.nls)[2,1],
-      high = confint(treat.nls)[2,2],
-      time = sampling_time))
-    
-  }
-  ynpq.overlap <- rbind(ynpq.overlap,
-                        cbind(compare_param(ynpq.lrc),
-                              time = sampling_time))
-  dif <- !subset(ynpq.overlap, time == sampling_time)$overlap
-  names <- subset(ynpq.overlap, time == sampling_time)$pair
-  names(dif) <- names
-  dif.letters <- multcompLetters(dif)
-  
-  ynpq.cld <- rbind(ynpq.cld,
-                    data.frame(
-                      treatment = names(dif.letters$Letters),
-                      group = dif.letters$Letters,
-                      time = sampling_time
-                    ))
-  
-}
-
-ynpq.overlap
-
-ynpq.cld
-
-ynpq.lrc
-
-##for loop to create model and plot data + model with confidence interval
-
-#create a list to store model fit summaries
-fit.sum <- list()
-all.fit <- list()
-
-#loop for sampling time
-for(sampling_time in unique(pam$Time)){
-  plot.list <- list() #creates list to store T1 + T2 plots
-  
-  param_estimates <- data.frame(Treatment = character(), 
-                                Asym = numeric(), 
-                                lrc = numeric(),
-                                stringsAsFactors = FALSE)
-  
-  print(paste("Following analyses are for time", sampling_time))
-  
-  for(treat in unique(pam$Treatment)){
-    #subset data for current treatment + sampling time
-    pam.sub <- subset(pam,
-                      Treatment == treat & Time == sampling_time,
-                      select = c(Irradiance, YNPQ))
-    
-    #fit the model
-    print(paste (treat, "at", sampling_time))
-    print(head(pam.sub))
-    print(paste("Max PSII is:", max(pam.sub$YNPQ)))
-    fit <- nlsLM(YNPQ ~ SSasympOrig(Irradiance, Asym, lrc),
-                 data = pam.sub,
-                 trace = T)
-    
-    #was this a success?
-    if(inherits(fit, "try-error")){
-      cat("Better luck next time, error fitting model for", treat, "at", sampling_time, "\n")
-      next
-    }
-    
-    #extract parameters
-    params <- coef(fit)
-    param_estimates <- rbind(param_estimates, 
-                             data.frame(treatment = treat, 
-                                        Asym = params["Asym"], 
-                                        lrc = params["lrc"]))
-    
-    #store that summary!
-    fit.sum[[paste(treat, sampling_time, sep = "_")]] <- summary(fit)
-    
-    #store the model!
-    all.fit[[paste(treat, sampling_time, sep = "_")]] <- fit
-    
-    #predictions + confidence intervals
-    irradiance_seq <- seq(min(pam.sub$Irradiance), 
-                          max(pam.sub$Irradiance),
-                          length.out = 100)
-    
-    # Generate predictions using the fitted model
-    pred <- predict2_nls(fit,
-                         newdata = data.frame(Irradiance = irradiance_seq),
-                         interval = "conf",
-                         level = 0.95)
-    
-    pred.df<- data.frame(Treatment = treat,
-                         Irradiance= irradiance_seq, 
-                         fit = pred[,1], 
-                         lwr = pred[,3], 
-                         upr = pred[,4])
-    
-    
-    # add prediction data to plot list
-    plot.list[[treat]] <- pred.df
-  }
-  
-  #what about comparing these models?
-  
-  #combine all predictions for current sampling time
-  combined_pred <- do.call(rbind, plot.list) %>% 
-    dplyr::mutate(Treatment = as.character(Treatment))
-  
-  #getting 95% confidence interval to plot "ranges" for each Irradiance/Treatment
-  ci.point <- summarySE(data = subset(pam, Time == sampling_time),
-                        "YNPQ",
-                        groupvars = c("Treatment", "Irradiance")) %>% 
-    dplyr::mutate(Treatment = as.character(Treatment))
-  
-  #plooooot! note: this is for one sampling time at a time
-  p <- ggplot()+
-    geom_errorbar(data = ci.point, 
-                  aes(x = Irradiance,
-                      ymin = YNPQ-sd, ymax = YNPQ+sd,
-                      color = Treatment), 
-                  width = 0.1, 
-                  position = position_dodge(150))+  # 95% confidence error bars
-    geom_point(data = ci.point,
-               aes(x= Irradiance, y = YNPQ, color = Treatment),
-               position = position_dodge(150))+
-    geom_ribbon(data = combined_pred,
-                aes(x=Irradiance, ymin =lwr, ymax=upr, fill= Treatment),
-                alpha = 0.2)+
-    geom_line(data = combined_pred, 
-              aes (x = Irradiance, y= fit, color = Treatment))+
-    annotate(geom = "text", x = 3000, y= 0.45, color = "#3b528b",
-             label = bquote("lrc"[60]~"="~ .(round(subset(param_estimates, treatment == 60)$lrc, digits = 3))))+
-    annotate(geom = "text", x = 3000, y= 0.41, color = "#5ec962",
-             label = bquote("lrc"[101]~"="~ .(round(subset(param_estimates, treatment == 101)$lrc, digits = 3))))+
-    annotate(geom = "text", x= 3500, y = 0.455, label = subset(ynpq.cld, time == sampling_time & treatment == 60)$group)+
-    annotate(geom = "text", x= 3500, y = 0.415, label = subset(ynpq.cld, time == sampling_time & treatment == 101)$group)+
-    scale_fill_manual(values = c("#5ec962", "#3b528b"))+
-    scale_color_manual(values = c("#5ec962", "#3b528b"))+
-    labs(title = paste("Non-Photochemical Quenching at", sampling_time),
-         x = "Irradiance",
-         y = "Y(NPQ)",
-         fill = "Air Pressure (kPa)",
-         color = "Air Pressure (kPa)")+
-    theme_minimal()+
-    theme(legend.position = "bottom")
-  
-  #print baby print
-  print(p)
-  ggsave(paste("npq_",sampling_time,".png"),p, bg = "white")
-}
+#ggsave("A.plot.png", A.plot)
 
 ```
-
-{{< pagebreak >}}

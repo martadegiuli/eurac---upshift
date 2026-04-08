@@ -158,7 +158,7 @@ base_plot2 <- function(df,
   
   if (!is.null(group)) {
     if (is.null(colscale)) {
-      colscale <- scales::hue_pal()(length(unique(df[[group]])))
+      colscale <- scales::hue_pal()(length(unique(df[[group]]))) #set color scale if none provided
     } else {
       colscale <- get(colscale)
     }
@@ -179,7 +179,7 @@ base_plot2 <- function(df,
     }
   }
   
-  ## 4. Base plot (aesthetics, labels, theme)
+  ## 4. Base plot (aesthetics, labels, base theme)
 
   plot <- ggplot(
     df,
@@ -201,6 +201,7 @@ base_plot2 <- function(df,
       plot <- plot +
         geom_boxplot(
           data = comp,
+          group = get(group),
           color = "grey",
           fill  = "grey"
         )
@@ -233,9 +234,10 @@ base_plot2 <- function(df,
   if (type == "boxplot") {
     
     plot <- plot +
-      geom_boxplot(aes(fill = get(group))) +
+      geom_boxplot(aes(group = get(group), fill = get(group))) +
       geom_jitter(width = 0.01)
     
+    #when a grouping variable is provided, add the colorscale to the plot
     if (!is.null(group)) {
       plot <- plot +
         scale_fill_manual(values = colscale, name = group)
@@ -274,13 +276,7 @@ base_plot2 <- function(df,
           method = stat_test,
           label = "p.signif",
           label.y = y.lev,
-          label.x = c(2, 3, 3, 1),     # anchor to real levels
-          position = position_nudge(x = c(
-            0,     # exactly at 2
-            0,     # exactly at 3
-            0.5,   # between 3 and 4
-            0    # between 1 and 2
-          ))
+          label.x.npc = "center"
         )
       
     } else {
@@ -304,6 +300,7 @@ base_plot2 <- function(df,
     
   } else if (!is.null(pvalues)) {
     
+    #create a dataframe which includes a y position for the placing of stats
     y_max_df <- df |>
       dplyr::group_by(
         dplyr::across(dplyr::all_of(c(facets, xvals)))
@@ -348,7 +345,7 @@ base_plot2 <- function(df,
   plot <- plot +
     coord_cartesian(ylim = c(NA, y.lim))
   
-  ## 10. More themes
+  ## 10. More themes - removes x axis marks from boxplots
   if(type == "boxplot"){
     plot <- plot +
       theme(axis.text.x = element_blank(),
@@ -359,206 +356,86 @@ base_plot2 <- function(df,
 }
 
 
-# base_plot2 <- function(df,
-#                       comp = NULL,
-#                       xvals,
-#                       yvals,
-#                       group = NULL,
-#                       colscale = NULL,
-#                       facets = NULL,
-#                       title = NULL,
-#                       x.axis = NULL,
-#                       y.axis = NULL,
-#                       type = c("boxplot", "line"),
-#                       pvalues = NULL) {
-#   
-#   type <- match.arg(type)
-#   
-#   ## 1. Common plot constants
-#   
-#   y.lim <- max(df[[yvals]], na.rm = TRUE) * 1.1
-#   y.lev <- max(df[[yvals]], na.rm = TRUE) * 1.05
-#   
-#   ## 2. Colour scale (only if grouping is used)
-# 
-#   if (is.null(colscale) && !is.null(group)) {
-#     colscale <- scales::hue_pal()(length(unique(df[[group]])))
-#   } else{
-#     colscale <- get(colscale)}
-#   
-#   ## 3. Faceting
-# 
-#   if (!is.null(facets)) {
-#   facet_layer <- {
-#     if (length(facets) == 2) {
-#       facet_grid(as.formula(paste(facets[1], "~", facets[2])))
-#     } else {
-#       facet_grid(as.formula(paste("~", facets)))
-#     }
-#   }
-#   }
-# 
-#   ## 4. Statistical test
-#   
-#     stat_test <- if (shapiro.test(df[[yvals]])$p.value > 0.05) {
-#       "t.test"
-#     } else {
-#       "wilcox.test"
-#     }
-#   
-#   ## 5. Base ggplot (shared grammar)
-#   
-#   plot <- ggplot(
-#     df,
-#     aes(
-#       x = get(xvals),
-#       y = get(yvals)
-#       )
-#   ) +
-#     labs(title = title, x = x.axis, y = y.axis) +
-#     theme_bw() +
-#     theme(legend.position = "bottom")
-#   
-#   
-#   if (!is.null(facets)) {
-#     plot <- plot + facet_layer
-#   }
-#   
-# 
-#   ## 6. Geometry selection
-# 
-#   if (type == "boxplot") {
-#     
-#     plot <- plot +
-#       geom_boxplot(aes(fill   = get(group))) +
-#       geom_jitter(width = 0.01) +
-#       coord_cartesian(ylim = c(NA, y.lim))
-#     
-#     if (!is.null(group)) {
-#       plot <- plot +
-#         scale_fill_manual(values = colscale, name = group)
-#     }
-#     
-#   } else {  # line / errorbar
-#     
-#     plot <- plot +
-#       geom_line(aes(colour = get(group))) +
-#       geom_errorbar(
-#         aes(ymin = get(yvals) - ci,
-#             ymax = get(yvals) + ci,
-#             colour = get(group)),
-#         width = 0.1
-#       ) +
-#       geom_point(aes(colour = get(group)))
-#     
-#     if (!is.null(group)) {
-#       plot <- plot +
-#         scale_color_manual(values = colscale, name = group)
-#     }
-#   }
-# 
-#   ## 7. Reference (visual) layers: aggregated / full dataset
-#   
-#   if (!is.null(comp)) {
-#     
-#     if (type == "boxplot") {
-#       
-#       plot <- plot +
-#         geom_boxplot(
-#           data = comp,
-#           color = "grey",
-#           fill  = "grey"
-#         )
-#       
-#     } else {  # line / errorbar
-#       
-#       offset <- max(comp[[yvals]], na.rm = TRUE) * 0.1
-#       
-#       y.max <- dplyr::summarise(
-#         comp,
-#         .by = xvals,
-#         max = max(get(yvals), na.rm = TRUE) + offset
-#       ) |>
-#         dplyr::pull(max)
-#       
-#       plot <- plot +
-#         geom_errorbar(
-#           data = comp,
-#           aes(
-#             ymin = get(yvals) - ci,
-#             ymax = get(yvals) + ci
-#           ),
-#           color = "grey",
-#           width = 0.1
-#         ) +
-#         geom_point(
-#           data = comp,
-#           aes(
-#             x = get(xvals),
-#             y = get(yvals)
-#           ),
-#           color = "grey"
-#         )
-#     }
-#   }
-# 
-#   ## 8. Statistical annotation layers (inference)
-#   
-#   if (type == "boxplot") {
-#     
-#     plot <- plot +
-#       stat_compare_means(
-#         data = df,
-#         method = stat_test,
-#         label = "p.signif",
-#         label.y = y.lev
-#       ) +
-#       stat_compare_means(
-#         data = df,
-#         method = stat_test,
-#         label = "p.format",
-#         label.y.npc = "bottom"
-#       )
-#     
-#   } else if (!is.null(pvalues)) {
-#     
-#     y_max_df <- df |>
-#       dplyr::group_by(
-#         dplyr::across(dplyr::all_of(c(facets, xvals)))
-#       ) |>
-#       dplyr::summarise(
-#         y_pos = max(.data[[yvals]], na.rm = TRUE) +
-#           0.1 * max(df[[yvals]], na.rm = TRUE),
-#         .groups = "drop"
-#       )
-#     
-#     # join y positions into pvalues
-#     pvalues_annot <- dplyr::left_join(
-#       pvalues,
-#       y_max_df,
-#       by = c(facets, xvals)
-#     )
-#     
-#     # DEBUG (now meaningful)
-#     print(pvalues_annot)
-#     
-#     plot <- plot +
-#       geom_text(
-#         data = pvalues_annot,
-#         aes(
-#           x = .data[[xvals]],
-#           y = y_pos,
-#           label = sig
-#         ),
-#         colour = "black"
-#       )
-#     
-#   }
-#   
-#   
-#   return(plot)
-# }
+plot_interaction_ci <- function(
+    data,
+    model,
+    y_var,
+    x_var = "pressure_n",
+    group_var = "D_f",
+    title = NULL,
+    y_label = NULL,
+    x_label = NULL
+) {
 
+  # Create prediction grid
+  newdat <- data |>
+    dplyr::summarise(
+      !!sym(x_var) := seq(min(get(x_var)), max(get(x_var)), length.out = 100),
+      .by = group_var
+    )
+  
+  # Predictions + 95% CI
+  pred <- predict(model, newdata = newdat, interval = "confidence")
+  newdat <- cbind(newdat, pred)
+  
+  # Extract slopes from model
+  b <- coef(model)
+  slopes <- data.frame(
+    D_f = levels(data[[group_var]]),
+    slope = c(
+      b[x_var],
+      b[x_var] + b[paste0(x_var, ":", group_var, "20")]
+    )
+  )
+  
+  # Position labels just below CI ribbon
+  slopes <- slopes |>
+    dplyr::left_join(
+      newdat |>
+        filter(!!sym(x_var) == min(!!sym(x_var)))|>
+        dplyr::summarise(
+          y_pos =
+            min(lwr, na.rm = TRUE) -
+            0.03 * diff(range(data[[y_var]], na.rm = TRUE)),
+          .by = !!sym(group_var)
+        ),
+      by = setNames(group_var, "D_f")
+    )
+  
+  # Build plot
+  ggplot(data, aes(x = get(x_var), y = get(y_var), color = get(group_var), fill = get(group_var))) +
+    geom_point(alpha = 0.6) +
+    geom_ribbon(
+      data = newdat,
+      aes(ymin = lwr, ymax = upr, y = NULL),
+      alpha = 0.25,
+      color = NA
+    ) +
+    geom_line(
+      data = newdat,
+      aes(y = fit),
+      linewidth = 1.2
+    ) +
+    geom_text(
+      data = slopes,
+      aes(
+        x = min(data[[x_var]]),
+        y = y_pos,
+        label = paste0("Slope = ", round(slope, 3))
+      ),
+      color = "black",
+      hjust = 0,
+      show.legend = FALSE
+    ) +
+    labs(
+      x = ifelse(is.null(x_label), x_var, x_label),
+      y = ifelse(is.null(y_label), y_var, y_label),
+      title = title,
+      color = group_var,
+      fill = group_var
+    ) +
+    theme_classic()
+}
 
 #'function to calculate significance
 #'arguments:
