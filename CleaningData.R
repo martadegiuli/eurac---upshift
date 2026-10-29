@@ -1,6 +1,33 @@
 library(readxl)
 library(tidyverse)
 
+#clean co2 data
+rotations <- read_excel("../RAW Data/rotations.xlsx")
+
+co2 <- read.delim("../RAW Data/CO2.txt", header = TRUE, sep = "\t") |>
+  mutate(date = parse_date_time(X, c("%d.%m.%y %H:%M:%S")), 
+         .keep = "unused")|>
+  pivot_longer(cols = c("SEC1", "SEC2", "SEC3", "SEC4"),
+               names_to = "SEC",
+               values_to = "co2_ppm")
+
+co2_treat <-  co2 |>
+  left_join(
+    rotations,
+    join_by(
+      SEC,
+      date >= date        # co2 timestamp >= treatment start time
+    )
+  ) |>
+  group_by(SEC, date.x)|>
+  slice_max(date.y, with_ties = FALSE) |>
+  ungroup() |>
+  dplyr::rename(date = date.x)|>
+  dplyr::select(-date.y)
+
+write.csv(co2_treat, "../RAW Data/co2_treat.csv")
+
+
 #import data
 chlab   <- read_excel("../RAW Data/chl_fluorcam_2025.xlsx", sheet = "chl ab")
 chlcar  <- read_excel("../RAW Data/chl_fluorcam_2025.xlsx", sheet = "chlcar")
