@@ -12,11 +12,29 @@ This R project contains the primary code and data used to produce datasets, gene
 
 **“Decoupling the Effect of Reduced Air Pressure and Humidity on Plant Physiology: an ECOTRON Experiment on *Arabidopsis thaliana*”**
 
-The sections below describe the project’s code and data structure and provide context for the analytical workflow. Detailed explanations of individual steps are provided in comments throughout the R scripts. Some code is commented out, including code for quick exploratory assessments of the data. This code has been retained for reference but is not required to reproduce the primary outputs.
+The sections below describe the project’s code and data structure and provide context for the analytic workflow. Detailed explanations of individual steps are provided in comments throughout the R scripts. Some code is commented out, including code for quick exploratory assessments of the data. This code has been retained for reference but is not required to reproduce the primary outputs.
 
 Figure references correspond to those used in the published manuscript and its Supporting Information.
 
 ## code information
+
+### `analysis.R`
+
+This script generates primary figures and statistical analyses. It imports data from `data/` and helper functions from `functions.R`. Most sections compare nested linear models with ANOVA to decide whether treatments can be aggregated before plotting and testing.
+
+-  **Treatment check** (`Evaporation` and `Chamber parameters` folds): beaker evaporation rates and running-mean chamber CO₂.
+
+-  **Chlorophyll fluorescence** (`Chlorophyll Fluorescence` fold): PSII yield, NPQ, ETR, qE and qP at saturating irradiance, aggregated by pressure since D adds no explanatory power.
+
+-  **Gas exchange** (`Gas Exchange` fold): assimilation is explained by pressure alone, while stomatal conductance, transpiration and Ci:Ca require the pressure × D interaction.
+
+-  **Pigments** (`Pigments` fold): Chl a:b, Chl:carotenoid and chlorophyll density, including a temporal comparison between sampling times.
+
+-  **Carbon content** (`Carbon content` fold): C:N and δ13C, where pressure, D and their interaction matter, so treatments are not aggregated. The interaction is visualized with `plot_interaction_ci`.
+
+-  **Biometrics** (`Biometric Data` fold): dry biomass, relative water content and change in leaf number.
+
+The script writes no files; outputs are plots and model summaries, with interpretations recorded in inline comments. Commented-out code labelled “NOT RUN” is retained for redundancy.
 
 ### `plotting.R`
 
@@ -26,25 +44,23 @@ It also generates Table 1 and Supplementary Table 1 - model and data summaries, 
 
 All the data called in this script are found in the `data` directory also found in this project.
 
-### `analysis.R`
-
-This script performs additional analyses, described below:
-
-- **modeling**
-
-- **anova**
-
 ### `functions.R`
 
 This script contains the main functions used to simplify exploring and plotting the data in `analysis.R` and `plotting.R`.
 
 The main functions are:
 
+- `add_comp()` adds a comparison column to the input data table, so the data can be faceted by pressure and by D
+
 - `plot_treatment_comparison()` creates a baseline scatterplot or boxplot which can be modified to specifications listed in the arguments of the function.
 
 - `plot_interaction_ci()` creates a scatter plot with trend lines according to the specified model.
 
+- `signif()` calculates summary statistics for a given variable (N, mean, SD, SE, CI)
+
 - `summarySE()` assists in converting complex datasets into plottable data with a specified confidence interval.
+
+- `add_stars()` is a helper function to convert p-values into significance stars
 
 ## data information
 
@@ -78,7 +94,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `cn.csv` contains the carbon analyses done on the samples collected at T2 and the d13C values of the air inside each chamber.
 
   | Column Name | Explanation                                                 |
-  |-------------------|-----------------------------------------------------|
+  |------------------|-----------------------------------------------------|
   | Sample_ID   | ID of the sample in the form of treatment_plantid_droughted |
   | N           | percentage of nitrogen in sample                            |
   | sd_N        | standard deviation of N measurement                         |
@@ -92,7 +108,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `gasexchange.csv` contains the gas exchange measurements at T2 collected with a GFS-3000 from Heinz Walz Gmbh.
 
   | Column name | Explanation |
-  |-------------------|-----------------------------------------------------|
+  |------------------|-----------------------------------------------------|
   | Date | date of measurement |
   | Time | time of measurement |
   | Elevation | elevation (treatment) plants grown at |
@@ -118,7 +134,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `pam.csv` contains the chlorophyll fluorescence measurements at T1 and T2 collected from leaf disks through a Closed FluorCam FC 800-C from Photon Systems Instruments.
 
   | Column Name | Explanation |
-  |------------------------|------------------------------------------------|
+  |------------------|-----------------------------------------------------|
   | sample | sample ID in the form measurement_treatment_time_ID |
   | treatment | treatment sample was gown in |
   | ID | ID of individual sampled |
@@ -140,7 +156,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `pigments.csv` contains the pigment analyses of leaf disks collected at T1 and T2.
 
   | Column Name | Explanation |
-  |------------------------|------------------------------------------------|
+  |------------------|-----------------------------------------------------|
   | sample.id | ID of sample (unique within each treatment) |
   | treatment | treatment present in chamber and time of measurement |
   | chlab | measured chlorophyll a : chlorophyll b ratio |
@@ -150,7 +166,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `biomass.csv` contains the final aboveground fresh, turgid, and dry biomass of our *Arabidopsis thaliana* individuals.
 
   | Column Name | Explanation |
-  |----------------------|--------------------------------------------------|
+  |------------------|------------------------------------------------------|
   | ID | ID of the sample in the form of treatment_plantid_droughted |
   | freshweight | fresh weight of sample in g |
   | turgidweight | turgid weight of sample in g |
