@@ -37,7 +37,7 @@ cols2a <- c("10" = "#932667",
 ### Figure 1: Chlorophyll fluorescence responses to pressure----
 
 #psii plot, with no x-axis label because it will be above
-psii.agg.plot.paper <- base_plot2(psii.agg, 
+psii.agg.plot.paper <- plot_treatment_comparison(psii.agg, 
                                    xvals = "irr", 
                                    yvals = "QY", 
                                    group = "pressure", 
@@ -50,9 +50,9 @@ psii.agg.plot.paper <- base_plot2(psii.agg,
                                    base_size = 20)
 
 #npq plot, with x-axis label because it will be positioned below
-npq.agg.plot.paper <- base_plot2(npq.agg, 
+npq.agg.plot.paper <- plot_treatment_comparison(npq.agg, 
                                   xvals = "irr", 
-                                  yvals = "NPQ1",
+                                  yvals = "NPQ",
                                   group = "pressure", 
                                   facets = c("time"),
                                   type = "line", 
@@ -63,23 +63,25 @@ npq.agg.plot.paper <- base_plot2(npq.agg,
                                   base_size = 20)
 
 #join 2 plots above
-ggarrange(psii.agg.plot.paper,
-          npq.agg.plot.paper,
-          common.legend =T, 
-          legend = "bottom", 
-          ncol = 1, 
-          align = "hv")
+chlfluor_paper <- ggarrange(psii.agg.plot.paper,
+                           npq.agg.plot.paper,
+                           common.legend =T, 
+                           legend = "bottom", 
+                           ncol = 1, 
+                           align = "hv")
 
 #save figure
 ggsave(
   filename = "figures/light_curve_paper.png",
-  plot = last_plot(),
+  plot = chlfluor_paper,
   width = 10,
   height = 8.7,
   units = "in",
   dpi = 300,
   bg = "white"
 )
+
+rm(psii.agg.plot.paper, npq.agg.plot.paper)
 
 ### Figure 2: Gas exchange responses to pressure and humidity----
 
@@ -140,6 +142,8 @@ ggsave(filename = "figures/gasexchange_paper.png",
        dpi = 300, 
        bg = "white")
 
+rm(plot.GH2O, plot.cica, plot.E)
+
 ### Figure 3: Pigment responses to pressure, humidity, and time ----
 
 #chlorophyll to carotenoid ratio
@@ -181,22 +185,24 @@ ggsave(filename = "figures/pigments_paper.png",
        dpi = 300, 
        bg = "white")
 
+rm(chlcar_time_paper, chlden_time_paper)
 
 ### Figure 4: 13C discrimination normalized for d13C of chamber air----
 
 #box plot of all treatments
-d13C_plot_paper <- base_plot2(cn.comp|>filter(drought=="nd",is.na(cn)==F), cn|>filter(drought=="nd",is.na(cn)==F), 
-                              xvals = "treatment",
-                              yvals = "C_discr", 
-                              group = "treatment",
-                              colscale = "cols4",
-                              facets = "comparison", 
-                              type = "boxplot",
-                              y.axis = expression(delta^{13}*C) ,
-                              base_size = 20,
-                              point_size = 1.5,
-                              add_p_signif = T,
-                              add_p_format = F)
+d13C_plot_paper <- plot_treatment_comparison(cn.comp|>filter(drought=="nd",is.na(cn)==F), 
+                                             cn|>filter(drought=="nd",is.na(cn)==F), 
+                                             xvals = "treatment",
+                                             yvals = "C_discr", 
+                                             group = "treatment",
+                                             colscale = "cols4",
+                                             facets = "comparison", 
+                                             type = "boxplot",
+                                             y.axis = expression(delta^{13}*C) ,
+                                             base_size = 20,
+                                             point_size = 1.5,
+                                             add_p_signif = T,
+                                             add_p_format = F)
 
 #scatter plot with interaction
 d13C_inter_plot_paper <- plot_interaction_ci(
@@ -219,8 +225,7 @@ d13C_paper <- ggarrange(d13C_plot_paper,
                         d13C_inter_plot_paper, 
                         nrow = 2, 
                         legend = "right", 
-                        common.legend = F, 
-                        align = "hv")
+                        common.legend = F)
 
 #save image
 ggsave(filename = "figures/d13C_paper.png",
@@ -231,9 +236,11 @@ ggsave(filename = "figures/d13C_paper.png",
        dpi = 300, 
        bg = "white")
 
+rm(d13C_plot_paper, d13C_inter_plot_paper)
+
 ### Supplementary Figure 1: Response of 1-qP to air pressure----
 
-qP.agg.plot.paper <- base_plot2(qP.agg, 
+qP.agg.plot.paper <- plot_treatment_comparison(qP.agg, 
                                  xvals = "irr", 
                                  yvals = "qP",
                                  group = "pressure", 
@@ -256,7 +263,7 @@ ggsave(
 )
 
 ### Supplementary Figure 2: Response of C:N ratio----
-cn_paper <- base_plot2(cn.comp|>filter(drought=="nd",is.na(cn)==F),
+cn_paper <- plot_treatment_comparison(cn.comp|>filter(drought=="nd",is.na(cn)==F),
            cn|>filter(drought=="nd",is.na(cn)==F), 
            xvals = "treatment", 
            yvals = "cn", 
@@ -358,7 +365,28 @@ for(response in c("A", "cica", "GH2O", "E")){
   
 }
 
-
+#biomass
+mod <- lm(dryweight ~pressure*D,
+          data = biomass |> filter(drought == "nd"))
+anova_df <- as.data.frame(anova(mod))
+model.table <- 
+  rbind(
+    model.table,
+    data.frame(
+      trait = "AGB",
+      D.F = anova_df["D", "F value"],
+      D.p = anova_df["D", "Pr(>F)"],
+      "D.p*" = add_stars(anova_df["D", "Pr(>F)"]),
+      P.F = anova_df["pressure", "F value"],
+      P.p = anova_df["pressure", "Pr(>F)"],
+      "P.p*" = add_stars(anova_df["pressure", "Pr(>F)"]),
+      "D*P.F" = anova_df["pressure:D", "F value"],
+      "D*P.p" = anova_df["pressure:D", "Pr(>F)"],
+      "D*P.p*" = add_stars(anova_df["pressure:D", "Pr(>F)"]),
+      time.F = NA,
+      time.p = NA,
+      "time.p*" = NA)
+  )
 
 #rwc
 mod <- lm(RWC ~ pressure*D,
@@ -385,7 +413,7 @@ model.table <-
 
 #leafdiff
 mod <- lm(diff ~ pressure*D,
-          data = leaf.diff2)
+          data = leaf.diff)
 anova_df <- as.data.frame(anova(mod))
 model.table <- 
   rbind(
@@ -433,7 +461,7 @@ for(response in c("cn", "C_discr", "N", "C")){
 }
 
 #chlor fluor
-for(response in c("QY", "NPQ1", "ETR", "qE", "qP")){
+for(response in c("QY", "NPQ", "ETR", "qE", "qP")){
   
   subset.pam <- pam |>
     filter(light == "Lss")
@@ -503,6 +531,15 @@ walz.means <- walz |>
                    sd = sd(value, na.rm = T),
                    n = n())
 
+#agb
+biomass.means <- biomass |> 
+  filter(drought == "nd") |> 
+  pivot_longer(dryweight, names_to = "trait") |> 
+  dplyr::summarise(.by =c("trait", "treatment"),
+                   mean = mean(value, na.rm = T),
+                   sd = sd(value, na.rm = T),
+                   n = n())
+
 #rwc
 rwc.means <- biomass |>
   filter(drought == "nd") |>
@@ -513,7 +550,7 @@ rwc.means <- biomass |>
                    n = n())
 
 #leaf.diff
-leaf.diff.means <- leaf.diff2 |>
+leaf.diff.means <- leaf.diff |>
   pivot_longer(diff, names_to = "trait")|>
   dplyr::summarise(.by = c("trait", "treatment"),
                    mean = mean(value, na.rm = T),
@@ -533,7 +570,7 @@ cn.means <- cn |>
 pam.means <- pam |>
   filter(light == "Lss",
          drought == "nd")|>
-  pivot_longer(c("QY", "NPQ1", "ETR", "qE", "qP"), names_to = "trait")|>
+  pivot_longer(c("QY", "NPQ", "ETR", "qE", "qP"), names_to = "trait")|>
   dplyr::summarise(.by = c("trait", "treatment", "time", "irr"),
                    mean = mean(value, na.rm = T),
                    sd = sd(value, na.rm = T),
@@ -542,6 +579,7 @@ pam.means <- pam |>
 
 value.table <- bind_rows(pigment.means,
                          walz.means,
+                         biomass.means,
                          rwc.means,
                          leaf.diff.means,
                          cn.means,
@@ -549,4 +587,9 @@ value.table <- bind_rows(pigment.means,
   dplyr::mutate(value = sprintf("%.3f ± %.3f (%i)", mean, sd, n), .keep = "unused")|>
   pivot_wider(names_from = treatment, values_from = value)
 
+#clean up
+rm(pigment.means, walz.means, biomass.means, rwc.means, leaf.diff.means, cn.means, pam.means)
+
 write.csv(value.table, "values.csv", row.names = F) 
+
+#------------- END ---------------------

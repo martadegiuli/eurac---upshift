@@ -40,7 +40,7 @@ This script contains the main functions used to simplify exploring and plotting 
 
 The main functions are:
 
-- `base_plot()` creates a baseline scatterplot or boxplot which can be modified to specifications listed in the arguments of the function.
+- `plot_treatment_comparison()` creates a baseline scatterplot or boxplot which can be modified to specifications listed in the arguments of the function.
 
 - `plot_interaction_ci()` creates a scatter plot with trend lines according to the specified model.
 
@@ -53,7 +53,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `beakers.csv` contains the evaporation measurements from our beakers. The columns are explained as follows:
 
   | Column Name | Explanation                                                   |
-  |-----------------|-------------------------------------------------------|
+  |------------------|------------------------------------------------------|
   | beaker      | beaker ID                                                     |
   | treatment   | treatment present in chamber during measurement period        |
   | date_in     | date of start of measurement period                           |
@@ -78,7 +78,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `cn.csv` contains the carbon analyses done on the samples collected at T2 and the d13C values of the air inside each chamber.
 
   | Column Name | Explanation                                                 |
-  |------------------|------------------------------------------------------|
+  |-------------------|-----------------------------------------------------|
   | Sample_ID   | ID of the sample in the form of treatment_plantid_droughted |
   | N           | percentage of nitrogen in sample                            |
   | sd_N        | standard deviation of N measurement                         |
@@ -92,7 +92,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `gasexchange.csv` contains the gas exchange measurements at T2 collected with a GFS-3000 from Heinz Walz Gmbh.
 
   | Column name | Explanation |
-  |----|----|
+  |-------------------|-----------------------------------------------------|
   | Date | date of measurement |
   | Time | time of measurement |
   | Elevation | elevation (treatment) plants grown at |
@@ -118,7 +118,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `pam.csv` contains the chlorophyll fluorescence measurements at T1 and T2 collected from leaf disks through a Closed FluorCam FC 800-C from Photon Systems Instruments.
 
   | Column Name | Explanation |
-  |-----------------------|-------------------------------------------------|
+  |------------------------|------------------------------------------------|
   | sample | sample ID in the form measurement_treatment_time_ID |
   | treatment | treatment sample was gown in |
   | ID | ID of individual sampled |
@@ -140,7 +140,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `pigments.csv` contains the pigment analyses of leaf disks collected at T1 and T2.
 
   | Column Name | Explanation |
-  |-----------------------|-------------------------------------------------|
+  |------------------------|------------------------------------------------|
   | sample.id | ID of sample (unique within each treatment) |
   | treatment | treatment present in chamber and time of measurement |
   | chlab | measured chlorophyll a : chlorophyll b ratio |
@@ -150,7 +150,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `biomass.csv` contains the final aboveground fresh, turgid, and dry biomass of our *Arabidopsis thaliana* individuals.
 
   | Column Name | Explanation |
-  |------------------|------------------------------------------------------|
+  |----------------------|--------------------------------------------------|
   | ID | ID of the sample in the form of treatment_plantid_droughted |
   | freshweight | fresh weight of sample in g |
   | turgidweight | turgid weight of sample in g |
@@ -160,7 +160,7 @@ The `data` directory contains data collected over the course of the UPSHIFT expe
 - `biometrics.csv` contains biometric measurements of the individuals taken at T1 and T2.
 
   | Column Name | Explanation                                                 |
-  |------------------|------------------------------------------------------|
+  |-------------------|-----------------------------------------------------|
   | ID          | ID of the sample in the form of treatment_plantid_droughted |
   | date        | date of measurement                                         |
   | time        | T1 or T2                                                    |

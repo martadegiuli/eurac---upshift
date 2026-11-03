@@ -45,34 +45,9 @@
 ##Libraries----
 
 #import libraries
-library(readxl)
 library(tidyverse)
 library(ggpubr)
-library(agricolae)
-library(multcompView)
-#Bolstad B (2024). preprocessCore: A collection of pre-processing functions. R package version 1.66.0, https://github.com/bmbolstad/preprocessCore.
-library(preprocessCore)
-library(pgirmess)
-library(PMCMRplus)
-library(MASS)
-library(rcompanion)
-library(broom)
-library(photosynthesis)
-library(minpack.lm)
-library(sjstats)
-library(insight)
-library(nlme)
-library(multcomp)
-library(nlraa)
-library(import)
-library(lme4)
-library(knitr)
-library(kableExtra)
-library(ggfortify)
-library(emmeans)
-library(lubridate)
 library(slider)
-library(data.table)
 
 #import functions
 source("functions.R")
@@ -142,7 +117,8 @@ pigments <- read_csv("data/pigments.csv") |>
 
 
 ## Beakers / Evaporation
-beakers <- read_csv("data/beakers.csv")|>
+beakers <- read_csv("data/beakers.csv",
+                    col_types = "ccctdctdddd")|>
   mutate(D = substr(treatment, 4, 5),
          pressure  = case_when(
            substr(treatment, 1, 2) == 26 ~ 98,
@@ -173,7 +149,7 @@ pam <- read_csv("data/pam.csv") |>
          ))
 
 co2_treat <- read.csv("data/co2_treat.csv") |>
-  mutate(date = parse_date_time(date, "ymd HMS"),
+  mutate(date = dmy_hm(date, tz = "Europe/Rome"),
          .keep = "unused")
 
 ## Defaults ----
@@ -208,13 +184,13 @@ method3 = "wilcox.test" #for non-parametric data
 beakers.comp <- add_comp(beakers, "pressure", "D")
 
 #test the distribution of the data
-invisible(shapiro.test(beakers$E))
+shapiro.test(beakers$evap_rate)
 #p-value = 0.007278, thus < 0.05 and so the data is not normally distributed - use wilcox test for significance
 
 #plot to get an overview
 beakers.plot<-
   beakers.comp |>
-  ggplot(aes(x = treatment, y = E, fill = treatment))+
+  ggplot(aes(x = treatment, y = evap_rate, fill = treatment))+
   geom_boxplot(data = beakers, color = "grey",fill = "grey")+ 
   geom_boxplot()+
   geom_jitter(width=0.01)+
@@ -242,14 +218,25 @@ beakers.plot<-
 
 beakers.plot
 
+#clean up
+rm(beakers.comp)
+
 # As expected, we observe a strong statistical difference between humidities at the same pressure (panels P= 61 and P = 98), with chambers at D = 20 showing higher evaporation. Slight differences are also present between elevations at the same humidity, with chambers at lower pressure generally showing a lower evaporation rate (specifically D = 10, where we observe a significant decrease, p = 0.023). Thus we will move forward with our analyses.
 
 ## Chamber parameters ----
 # Concentration of $CO_2$ in ppm of each chamber, the data is a 30min running mean of the raw (1min resolution) data. Colors indicate treatment present in each chamber, red shaded area indicate periods when measurements were taking place (expect higher ppm $CO_2$ due to human presence), line type indicates the chamber, and red vertical bars indicate rotations of treatments between the chambers.
 
 #create outline of human presence in chambers (i.e. when measurements were taken)
-meas <- data.frame(x_start = parse_date_time(c("2025-11-03 15:00:00", "2025-11-06 8:00:00", "2025-11-10 8:30:00", "2025-11-11 8:30:00", "2025-11-12 8:30:00" ), "ymd HMS"),
-                   x_end = parse_date_time(c("2025-11-03 17:00:00", "2025-11-06 16:00:00", "2025-11-10 12:00:00", "2025-11-11 16:00:00", "2025-11-12 16:00:00"), "ymd HMS"))
+meas <- data.frame(x_start = parse_date_time(c("2025-11-03 15:00:00",
+                                               "2025-11-06 8:00:00",
+                                               "2025-11-10 8:30:00",
+                                               "2025-11-11 8:30:00", 
+                                               "2025-11-12 8:30:00" ), "ymd HMS"),
+                   x_end = parse_date_time(c("2025-11-03 17:00:00", 
+                                             "2025-11-06 16:00:00",
+                                             "2025-11-10 12:00:00",
+                                             "2025-11-11 16:00:00",
+                                             "2025-11-12 16:00:00"), "ymd HMS"))
 
 #create running mean of CO2 measurement
 co2_rm <- co2_treat |>
@@ -273,7 +260,7 @@ segments <- co2_rm |>
   )
 
 #plot
-ggplot(co2_rm, aes(x=date, y= co2_runmean, linetype = SEC, color = treatment))+
+ppm_co2 <- ggplot(co2_rm, aes(x=date, y= co2_runmean, linetype = SEC, color = treatment))+
   geom_rect(data = meas,
             aes(xmin = x_start,
                 xmax = x_end,
@@ -306,15 +293,13 @@ ggplot(co2_rm, aes(x=date, y= co2_runmean, linetype = SEC, color = treatment))+
   theme_bw()+
   theme(legend.position = "bottom")
 
+ppm_co2
 
 # There is variability in the $CO_2$ concentration between the chambers, with SEC2 having a consistently higher concentration of $CO_2$ than the others. Each treatment was exposed to each chamber, and photosynthetic parameters were taken using the in-situ ppm of $CO_2$ (instantaneous reading).
 
+rm(meas, co2_rm, segments)
+
 ## Chlorophyll Fluorescence ----
-
-### Data cleaning for graph making----
-
-#add 'comparison column to compare across factors
-pam.comp <- add_comp(pam, "pressure", "D")
 
 ### Sensitivity to treatment factors ----
 
@@ -342,7 +327,9 @@ psii.model.d<-lm(QY ~ irr + pressure,
 anova(psii.model.d, psii.model.c, psii.model.b, psii.model)
 
 # Since the explanatory power of the models doesn't decrease with the removal of the interaction + humidity terms, it seems that the best model is the one that doesn't include humidity at all. This indicates that we can make our comparisons looking simply at the difference between pressure treatments, aggregating our observations by pressure. Based on these results, it would be statistically sound not to differentiate by measurement time as no *significant* change in explanatory power is seen. This tends towards pseudo-replication though, and would likely become problematic to defend to a potential reviewer.
-#
+
+#clean up
+rm(subset.pam, psii.model, psii.model.b, psii.model.c, psii.model.d)
 
 #NOT RUN, for redundancy. But here you see that the same result is found for the other response components.
 
@@ -363,6 +350,10 @@ anova(psii.model.d, psii.model.c, psii.model.b, psii.model)
 #   
 #   #print(anova(model, model.b, model.c, model.d))
 #   print(anova(model))}
+#
+# #clean up
+# rm(subset.pam, model, model.b, model.c, model.d)
+
 
 ### PSII(Y) ----
 
@@ -403,7 +394,7 @@ df_pvalues.psii<-  signif(pam|>filter(light == "Lss", drought == "nd"),
 #We see that at lower pressure we have a higher quantum efficiency of PSII at both measurement times.
 
 # more general plot
-# psii.agg.plot <- base_plot2(psii.agg, 
+# psii.agg.plot <-  plot_treatment_comparison(psii.agg, 
 #                             xvals = "irr", yvals = "QY", 
 #                             group = "pressure", 
 #                             facets = c("time"), 
@@ -450,16 +441,20 @@ df_pvalues.npq <-  signif(pam|>filter(light == "Lss", drought == "nd"), comparis
 #sneak preview
 #df_pvalues.npq
 
+#npq values seem to be different beween pressures
+
 #plot
-# npq.agg.plot <- base_plot2(npq.agg, xvals = "irr", yvals = "NPQ", 
+# npq.agg.plot <-  plot_treatment_comparison(npq.agg, xvals = "irr", yvals = "NPQ",
 #                            group = "pressure",
 #                            facets = c("time"),
-#                            type = "line", 
-#                            pvalues = df_pvalues.npq, 
-#                            y.axis = "NPQ", x.axis = expression(Light~"["*"\u03BC"*E*"]"), 
+#                            type = "line",
+#                            pvalues = df_pvalues.npq,
+#                            y.axis = "NPQ", x.axis = expression(Light~"["*"\u03BC"*E*"]"),
 #                            colscale = "cols2")
 # 
 # npq.agg.plot
+
+#they're higher at high pressure
 
 ### ETR ----
 
@@ -488,23 +483,32 @@ for(sampling_time in unique(pam$time)){
 }
 
 
-##calculate stat signif
+##calculate significance statistics
 
-df_pvalues.etr<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "ETR" )
+df_pvalues.etr<-  signif(pam|>filter(light == "Lss", drought == "nd"), 
+                         comparison_column = "pressure", 
+                         variable = "ETR" )
+
+#warnings due to expected 0 values across all treatments at irradiance = 0.
+
+#sneakpeak of significances
+#df_pvalues.etr
 
 #plotting
-etr.agg.plot <- base_plot2(etr.agg, xvals = "irr", yvals = "ETR", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.etr, y.axis = "ETR", x.axis = expression(Light~"["*"\u03BC"*E*"]"), colscale = "cols2")
+# etr.agg.plot <-  plot_treatment_comparison(etr.agg, 
+#                            xvals = "irr", yvals = "ETR", 
+#                            group = "pressure", 
+#                            facets = c("time"), 
+#                            type = "line", 
+#                            pvalues = df_pvalues.etr, 
+#                            y.axis = "ETR", x.axis = expression(Light~"["*"\u03BC"*E*"]"), 
+#                            colscale = "cols2")
+# 
+# etr.agg.plot
 
-etr.agg.plot
- 
+#etr is lower at higher pressure
 
-### qE
-
- 
-#| label: agg qE
-#| echo: false
-#| message: false
-#| warning: false
+### qE ----
 
 #dataframe to fill for summary data
 qE.agg <- data.frame(pressure  = factor(),
@@ -531,24 +535,30 @@ for(sampling_time in unique(pam$time)){
 }
 
 
-##calculate stat signif
+##calculate significance statistics
 
-df_pvalues.qE<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "qE" )
+df_pvalues.qE<-  signif(pam|>filter(light == "Lss", drought == "nd"), 
+                        comparison_column = "pressure", 
+                        variable = "qE" )
+#sneak preview
+#df_pvalues.qE
 
 #plot!
 
-qE.agg.plot <- base_plot2(qE.agg, xvals = "irr", yvals = "qE", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qE, y.axis = "qE", x.axis = expression(Light~"["*"\u03BC"*E*"]"), colscale = "cols2")
-
-qE.agg.plot
+# qE.agg.plot <-  plot_treatment_comparison(qE.agg, 
+#                           xvals = "irr", yvals = "qE", 
+#                           group = "pressure", 
+#                           facets = c("time"), 
+#                           type = "line", 
+#                           pvalues = df_pvalues.qE, 
+#                           y.axis = "qE", x.axis = expression(Light~"["*"\u03BC"*E*"]"), 
+#                           colscale = "cols2")
+# 
+# qE.agg.plot
  
+#higher values at higher pressure
 
-### qP
-
- 
-#| label: agg qP
-#| echo: false
-#| message: false
-#| warning: false
+### 1- qP ----
 
 #dataframe to fill for summary data
 qP.agg <- data.frame(pressure  = factor(),
@@ -575,9 +585,14 @@ for(sampling_time in unique(pam$time)){
 }
 
 
-##calculate stat signif
+##calculate sifnificance statistics
 
-df_pvalues.qP<-  signif(pam|>filter(light == "Lss", drought == "nd"), comparison_column = "pressure", variable = "qP" )
+df_pvalues.qP<-  signif(pam|>filter(light == "Lss", drought == "nd"), 
+                        comparison_column = "pressure",
+                        variable = "qP" )
+
+#sneak peak & see the differences
+#df_pvalues.qP
 
 #convert to 1 - qP for plotting
 qP.agg <- qP.agg |> 
@@ -586,37 +601,73 @@ qP.agg <- qP.agg |>
     TRUE ~ qP
   ))
 
+#plot
+# qP.agg.plot <-  plot_treatment_comparison(qP.agg,
+#                           xvals = "irr", yvals = "qP", 
+#                           group = "pressure", 
+#                           facets = c("time"), 
+#                           type = "line", 
+#                           pvalues = df_pvalues.qP, 
+#                           y.axis = "qP", x.axis = expression(Light~"["*"\u03BC"*E*"]"),
+#                           colscale = "cols2")
+# 
+# qP.agg.plot
 
-qP.agg.plot <- base_plot2(qP.agg, xvals = "irr", yvals = "qP", group = "pressure", facets = c("time"), type = "line", pvalues = df_pvalues.qP, y.axis = "qP", x.axis = expression(Light~"["*"\u03BC"*E*"]"), colscale = "cols2")
 
-qP.agg.plot
- 
 
-We see aligned trends across all the chlorophyll fluorescence parameters aggregated by pressure: *Arabidopsis thaliana* plants exposed to low pressure had a higher quantum yield of PSII, lower NPQ, a higher electron transport rate and lower qP and qE. These results are consistent in indicating a higher PSII operating efficiency, and a reduced reliance on photoprotective energy dissipation mechanisms in plants grown at low pressure.
 
-The treatment level (@sec-supp-chlotreat) and temporal level (@sec-supp-chlotemp) results are presented in the supplementary materials.
+# We see aligned trends across all the chlorophyll fluorescence parameters aggregated by pressure: *Arabidopsis thaliana* plants exposed to low pressure had a higher quantum yield of PSII, lower NPQ, a higher electron transport rate and lower qP and qE. These results are consistent in indicating a higher PSII operating efficiency, and a reduced reliance on photoprotective energy dissipation mechanisms in plants grown at low pressure.
 
-## Photosynthesis {#sec-photosynthesis}
+## Gas Exchange ----
 
-We know that these measurements depend on temperature as well and in @sec-leaftemp we provide the leaf temperature data - which varies from 25.0°C to 24.55°C across treatments.
+### Leaf temperature ----
 
-To better understand the interaction of our manipulated parameters, it would be wise to look at how a similar model scheme compares for our photosynthetic response parameters.
+# We know that these measurements depend on temperature as well here we provide the leaf temperature data - which varies from 25.0°C to 24.55°C across treatments. [NOT RUN - but you can for your peace of mind]
 
-### Assimilation Rate
+#test for normality
 
-For assimilation rate, we will compare the following three nested models: \begin{align}
-assimilation &\sim pressure \\
-assimilation &\sim pressure + D\\
-assimilation &\sim pressure * D
-\end{align}
+#shapiro.test(walz$Tleaf)
+#p-value = 0.052, so the data is (barely) normally distributed and we can use parametric tests for our statistics
 
- 
-#| label: phot pressure v D anova
-#| echo: false
-#| message: false
-#| warning: false
-#| lst-cap: photosynthesis anova
-#| lst-label: lst-A.anova
+#base facet plot
+
+# tleaf.plot <- walz|>
+#   ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
+#   geom_boxplot()+
+#   geom_jitter(width=0.01)+
+#   labs(x = NULL,
+#        y = "Temperature [°C]")+
+#   scale_fill_manual(values= cols4)+
+#   stat_compare_means(comparisons = my.comps,
+#                      label = "p.signif",
+#                      method = method2,
+#                      label.y = c(24.9, 24.9, 25,25.07),
+#                      paired = F
+#   )+
+#   stat_compare_means(label.y = 24.6,
+#                      label.x.npc = "middle")+
+#   theme_bw( )+
+#   theme(axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank(),
+#         legend.position = "bottom")
+# 
+# tleaf.plot
+
+#clean up
+#rm(tleaf.plot)
+
+#We do see a significant difference between some plots but at the scale of 0.1 °C, physiologically insignificant.
+
+### Sensitivity to treatments----
+
+# To better understand the interaction of our manipulated parameters, it would be wise to look at how a similar model scheme compares for our gas exchange parameters.
+
+#### Assimilation Rate ----
+
+# For assimilation rate, we will compare the following three nested models:
+# assimilation ~ pressure \\
+# assimilation ~ pressure + D\\
+# assimilation ~ pressure * D
 
 assim.model.c <- lm(A ~ pressure + D + pressure*D,
                         data = walz)
@@ -630,1079 +681,72 @@ anova(assim.model.a, assim.model.b, assim.model.c) #double check comparing all t
 anova(assim.model.c) #most of the variance explained only by pressure
  
 
-Comparing the three models, we observe no loss in explanatory power with the removal of *D* and the interaction term. Selecting only the best fit model ($assimilation \sim pressure * D$), we can see that a large majority of the variance (\~94.4%) is explained only by pressure. The other two effects (*D* and the interaction between *pressure* and *D*) don't have a significant impact on the model.
+# Comparing the three models, we observe no loss in explanatory power with the removal of *D* and the interaction term. Selecting only the best fit model ($assimilation ~ pressure * D$), we can see that a large majority of the variance (\~94.4%) is explained only by pressure. The other two effects (*D* and the interaction between *pressure* and *D*) don't have a significant impact on the model.
 
- 
-#| label: Aggregated assimilation rate
+# assim.plot <-  plot_treatment_comparison(walz,
+#            xvals = "pressure", yvals = "A", 
+#            group = "pressure", 
+#            colscale = "cols2", 
+#            type = "boxplot", 
+#            y.axis = expression(Assimilation~Rate~"["*"\u03BC"*mol~m^-2~s^-1*"]"))
 
-#check for normality
-invisible(shapiro.test(walz$A)) 
-#p-value = 0.3324, so the data is normally distributed and we can use parametric 
-#tests for our statistics
+# assim.plot
 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+#A is significantly lower at lower pressure
 
+#clean up
+rm(assim.model.a, assim.model.b, assim.model.c)
 
-base_plot2(walz, xvals = "pressure", yvals = "A", group = "pressure", colscale = "cols2", type = "boxplot", y.axis = expression(Assimilation~Rate~"["*"\u03BC"*mol~m^-2~s^-1*"]"))
+#### gH2O, cica, E ---- 
 
- 
+# Above, we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of the response of assimilation. For the remaining parameters, namely transpiration, Ci:Ca, and stomatal conductance, we find that the best fit model is $response ~ pressure * D$ .
 
-### ANOVAs for Photosynthesis {#sec-photanova}
+#[NOT RUN - but you can if it pleases you]
+# for(response in c("cica", "E", "GH2O")){
+#   
+#   cat(paste("\n ANOVA for", response," \n \n"))
+#   
+#   model.c <- lm(get(response) ~ pressure + D + pressure*D,
+#                 data = walz)
+#   model.b <- lm(get(response) ~ pressure + D,
+#                 data = walz)
+#   model.a <- lm(get (response) ~ pressure,
+#                 data = walz)
+#   print(anova(model.a, model.b, model.c))
+#   
+#   #print(autoplot(model.c)) # just a check that a gaussian model is correct for this 
+#   
+#   print(anova(model.c)) # if we want to look more closely
+# }
+# rm(model.a, model.b, model.c)
+# 
+# What we observe there is that the interaction between *D* and *pressure* is fundamental in being able to explain our results for the remaining responses. Importantly (seen in the ANOVAs for the individual best-fit model) we see that *D* has no impact by itself, rather it modulates the impact of *pressure*. We can't aggregate for pressure in these cases due to the importance of the interaction term, rather we should try to understand how *D* and *pressure* interact, looking at the slope of their interaction.
 
-Above, we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of the response of assimilation. For the remaining parameters, namely transpiration, Ci:Ca, and stomatal conductance, we find that the best fit model is $response \sim pressure * D$ . The results of the anovas for those variables are found in @sec-supp-photanova.
-
-What we observe there is that the interaction between *D* and *pressure* is fundamental in being able to explain our results for the remaining responses. Importantly (seen in the ANOVAs for the individual best-fit model) we see that *D* has no impact by itself, rather it modulates the impact of *pressure*. We can't aggregate for pressure in these cases due to the importance of the interaction term, rather we should try to understand how *D* and *pressure* interact, looking at the slope of their interaction.
-
-### Pressure : D interaction
-
- 
-#| label: phot-interaction
-#| warning: false
-#| fig.cap: "Responses of **a** stomatal conductance [$\\mathrm{mol\\ m^{-2}\\ s^{-1}}$], **b** intercellular to ambient $CO_2$ concentration, and **c** transpiration [$\\mathrm{mol\\ H_2O\\ m^{-2}\\ s^{-1}}$] to pressure under different D. Shaded areas are the 95% confidence interval of the best-fit line; slopes come from the respective models (see above)."
+### Pressure : D interaction ----
 
 #modify pressure and D in walz dataframe to be able to use them correctly in the lm
 walz_f <- walz|>
   mutate(pressure_n = as.numeric(as.character(pressure)),
          D_f = factor(D, levels = c(10,20)))
 
-
 # Fit interaction model with raw pressure
 model.GH2O <- lm(GH2O ~ pressure_n * D_f, data = walz_f)
 
-plot.GH2O <- plot_interaction_ci(
-  data = walz_f,
-  model = model.GH2O,
-  y_var = "GH2O",
-  x_label = "Pressure [kPa]",
-  y_label = expression(gH[2]*O),
-  legend = "D",
-  colscale = "cols2a"
-)
-
-
 model.cica <- lm(cica ~ pressure_n * D_f, data = walz_f)
-
-plot.cica <-plot_interaction_ci(
-  data = walz_f,
-  model = model.cica,
-  y_var = "cica",
-  x_label = "Pressure [kPa]",
-  y_label = "Ci:Ca",
-  legend = "D",
-  colscale = "cols2a"
-)
 
 model.E <- lm(E ~ pressure_n * D_f, data = walz_f)
 
-plot.E <- plot_interaction_ci(
-  data = walz_f,
-  model = model.E,
-  y_var = "E",
-  y_label = "Transpiration",
-  x_label = "Pressure [kPa]",
-  legend = "D",
-  colscale = "cols2a"
-)
+#see direction of interactions
 
-arranged = ggarrange(plot.GH2O, plot.cica, plot.E, common.legend =T, legend = "right", labels = "auto")
-arranged
+#model.GH2O
+#model.cica
+#model.E
  
+# While the response changes with pressure, the direction of that change depends on D. We observe that pressure increases gas exchange, transpiration, and Ci:Ca under high *D* (low air water content) and decreases the responses of these variables under low *D* (high air water content).
 
-While the response changes with pressure, the direction of that change depends on D. We observe that pressure increases gas exchange, transpiration, and Ci:Ca under high *D* (low air water content) and decreases the responses of these variables under low *D* (high air water content).
+## Pigments (chlorophyll data) ----
 
-Since it doesn't make sense to aggregate for pressure and the main results are presented in the above graphs, the treatment level results are presented in supplementary materials (@sec-phottreatment).
-
-## Pigments (chlorophyll data)
-
-### Chlorophyll A:B ratio
-
-There is no statistical evidence of an interaction between *pressure* and *D* (see @sec-chloanova), so we can drop all models which include *pressure \* D*.
-
-Looking at the chlorophyll A:B ratio:
-
- 
-#| label: chlab-anova2
-#| echo: false
-#| message: false
-#| warning: false
-
-model.chlab1 <- lm(chlab ~ pressure + time,
-                        data = pigments)
-model.chlab2 <- lm(chlab ~ pressure + D + time,
-                        data = pigments)
-
-anova(model.chlab1, model.chlab2)
-
-model.chlab3 <- lm(chlab ~ pressure*time,
-                   data = pigments)
-
-anova(model.chlab1, model.chlab3)
-anova(model.chlab3)
-
- 
-
-The chlorophyll A:B ratio seems to be influenced mostly by pressure with a slight, but non significant effect of the interaction of *time*. This seems to indicate that for this variable we could aggregate pressure treatments and time, but returning to our "pseudoreplication" issue, we will maintain our two sampling times separate.
-
- 
-#| label: chlab-graph
-#| fig-cap: "Chlorophyll A:B ratio, aggregated by pressure treatment."
-
-base_plot2(pigments, xvals = "pressure", yvals = "chlab", group = "pressure", colscale = "cols2", type = "boxplot", y.axis = "Chlorophyll A:B Ratio")
-
- 
-
-A:B is usually used as an indicator of light availability, with shade-acclimated leaves often showing a lower ratio due to a larger investment in light-harvesting complexes. It can also be interpreted as an attempt to maximize light capture. In our scenario, this seems to indicate that at lower pressure, *Arabidopsis* plants are investing more in light harvesting than processing machinery - a potential response to the increased efficency of the photosynthetic apparatus outlined in @sec-chlfluor.
-
-### Chlorophyll:carotenoid ratio & chlorophyll density
-
-Looking more closely at the chloropyhll:carotenoid ratio:
-
- 
-#| label: chlcar-anova2
-#| echo: false
-
-model.chlcar1 <- lm(chlcar ~ D + time,
-                        data = pigments)
-model.chlcar2 <- lm(chlcar ~ pressure + D + time,
-                        data = pigments)
-
-anova(model.chlcar1, model.chlcar2)
-
-model.chlcar3 <- lm(chlcar ~ D*time,
-                   data = pigments)
-
-anova(model.chlcar1, model.chlcar3)
-anova(model.chlcar1)
-
- 
-
-We have a different effect - *pressure* no longer seems to play a role, and rather we have a strong effect of *D* and a minimal effect of *time*, though their interaction does not have a statistically significant impact. It could be interesting to delve into this temporal trend. To do so, let's look at a temporal comparison based on treatments.
-
- 
-#| label: chlcar-time
-#| echo: false
-
-chlcar_time <- ggplot(pigments, aes(x= treatment, y = chlcar, fill = time))+
-  geom_boxplot()+
-  stat_compare_means(label = "p.signif")+
-  labs(y = "Chlorophyll : Carotenoid",
-       x = NULL,
-       fill = NULL)+
-  theme_bw()
-
-chlcar_time
-
- 
-
-Cool! There's a statistically significant decrease in the ratio at low pressure with time. This could indicate a decrease in stress response as carotenoids are photoprotective pigments and can indicate an investment in stress tolerance. To confirm this interpretation, we have to look at the chlorophyll density trends:
-
- 
-#| label: chlden-anova2
-#| echo: false
-
-model.chlden1 <- lm(density ~ D + time,
-                        data = pigments)
-model.chlden2 <- lm(density ~ pressure + D + time,
-                        data = pigments)
-
-anova(model.chlden1, model.chlden2)
-
-model.chlden3 <- lm(density ~ D*time,
-                   data = pigments)
-
-anova(model.chlden1, model.chlden3)
-anova(model.chlden1)
-
- 
-
-The case for chlorophyll density is similar, but cleaner, with the only fixed effect having a significant impact on the variable being *D*. Time doesn't seem to have an impact. But let's double check, to understand our chlorophyll:carotenoid ratios better.
-
- 
-#| label: chlden-time
-#| echo: false
-
-chlden_time <- ggplot(pigments, aes(x= treatment, y = density, fill = time))+
-  geom_boxplot()+
-  stat_compare_means(label = "p.signif")+
-  labs(y = expression(Chlorophyll~Density~"["*"\u03BC"*g~chl~cm^-2*"]"),
-       x = NULL,
-       fill = NULL)+
-  theme_bw()
-
-chlden_time
- 
-
-While we seem to observe a temporal trend - with an increase of chlorophyll at high pressure and a decrease at low pressure over time, it is not statistically significant. This lack of statistical significance is further supported by the anovas above, indicating that the most likely interpretation of the temporal signal in the chlorophyll:carotenoid ratio is a decrease in carotenoids. Thus a decreased stress response - since the decrease in the chlorophyll:carotenoid ratio is only observed in the low pressure treatments, this is potentially an adaptation to pressure.
-
-The original treatment-level plots can be found @sec-supp-pig.
-
-## Carbon content - C:N ratio and d13C
-
- 
-#| label: Carbon content data cleaning
-#| include: false
-
-#### Data cleaning
-#modifying dataframe for easier faceting
-
-cn.comp <- add_comp(cn, "pressure", "D")
- 
-
-### C:N Ratio
-
- 
-#| label: CN-anova
-
-model.cn1 <- lm(cn ~ pressure + D + pressure*D, data = cn)
-model.cn2 <- lm(cn ~ pressure + D , data = cn)
-model.cn3 <- lm(cn ~ pressure, data = cn)
-model.cn4 <- lm(cn ~ D, data = cn)
-
-anova(model.cn3, model.cn2, model.cn1)
-anova(model.cn4, model.cn2, model.cn1)
-
-anova(model.cn2)
- 
-
-There is no statistical evidence of an interaction between *pressure* and *D*, but in both anova model comparisons, the model including both *pressure* and *D* performs much better than the one with a single effect. The anova of the single selected model - *cn \~ pressure + D* , indicates that D has a stronger effect than pressure (F = 18, F = 7). This means we cannot aggregate for pressure treatment (or for D treatment). The original graphs follow:
-
- 
-#| label: CN ratio
-
-#check for normality
-invisible(shapiro.test(cn$cn) )
-#p-value = .067, so the data is normally distributed and we can use parametric 
-#tests for our statistics
-# 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(cn$cn)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(cn$cn)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-base_plot2(cn.comp|>filter(drought=="nd",is.na(cn)==F), cn|>filter(drought=="nd",is.na(cn)==F), xvals = "treatment", yvals = "cn", group = "treatment", colscale = "cols4", facets = "comparison", type = "boxplot", y.axis = "C:N" )
- 
-
-There seems to be a modulating signal of *D* on the effect of *pressure* on cn (also observed below in the d13C). Generally, we observe an increase in C:N with a decrease in pressure an increase in D. This signal is significant only in the more stressed plants (i.e. low pressure - P = 61, and high D - D = 20), but is present across all analyses.
-
-### $\delta^{13}C$
-
- 
-#| label: d13c anvoa
-
-model.d13c1 <- lm(C_discr ~ pressure + D + pressure*D, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
-model.d13c2 <- lm(C_discr ~ pressure + D , data = cn|>filter(drought=="nd",is.na(C_discr)==F))
-model.d13c3 <- lm(C_discr ~ pressure, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
-model.d13c4 <- lm(C_discr ~ D, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
-
-anova(model.d13c3, model.d13c2, model.d13c1)
-anova(model.d13c4, model.d13c2, model.d13c1)
-
-anova(model.d13c1)
- 
-
-*Pressure*, *D*, and their interaction have strong effects on $\delta^{13}C$. We sadly then cannot aggregate by either *pressure* or *D*, but can take a look at the interaction term as well as a closer look at how each effect impacted $\delta^{13}C$ .
-
- 
-#| label: d13C
-#| echo: false
-#| warning: false
-#| fig-cap: $^{13}C$ discrimination normalized for $\delta^{13}C$ of the air in each chamber.
-
-#check for normality
-invisible(shapiro.test(abs(cn$C_discr))) 
-#p-value = 2.841e-05, so the data is not normally distributed and we cannot use parametric 
-#tests for our statistics
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(abs(cn$C_discr))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-
-
-d13C_plot <- base_plot2(cn.comp|>filter(drought=="nd",is.na(cn)==F), cn|>filter(drought=="nd",is.na(cn)==F), xvals = "treatment", yvals = "C_discr", group = "treatment", colscale = "cols4", facets = "comparison", type = "boxplot", y.axis = expression(delta^{13}*C) )
-
-#modifying cn for the function:
-
-cn_mod <- cn|>
-  filter(drought=="nd",is.na(C_discr)==F)|>
-  mutate(pressure_n = as.numeric(as.character(pressure)),
-         D_f = factor(D, levels = c("10", "20")))
-
-model.d13c1 <- lm(C_discr ~ pressure_n*D_f, data = cn_mod)
-
-d13C_inter_plot <- plot_interaction_ci(
-  data = cn_mod,
-  model = model.d13c1,
-  y_var = "C_discr",
-  x_var = "pressure_n",
-  group_var = "D_f",
-  y_label = expression(delta^{13}*C),
-  x_label = "Pressure [kPa]",
-  legend = "D",
-  colscale = "cols2a"
-)
-
-arranged_d13C <- ggarrange(d13C_plot, d13C_inter_plot, nrow = 2, legend = "right", common.legend = F)
-
-arranged_d13C
- 
-
-*D* has a significant modulating effect on the impact of pressure (p \< 0.001), with higher *D* (drier conditions) increasing the effect of *pressure* on the discrimination of $^{13}C$. $\delta^{13}C$ is understood as a long term physiologic signal for intrinsic water use efficiency, in this case helping us develop an understanding of the long term stomatal conductance and photosynthetic functioning. Plants at low pressure discriminate less against $\^{13}C$, indicating a potential signal of long-term decreased stomatal conductance. Under dry conditions, this effect is amplified. Our C:N results - with a higher C:N in our low pressure plants, supports this stomatal-conductance based interpretation.
-
-## Biometric Data
-
- 
-#| include: false
-#modifying dataframe for easier faceting
-
-biomass.comp <- add_comp(biomass, "pressure", "D")
-
-biometric.comp <- add_comp(biometric, "pressure", "D")
- 
-
-### Relative Water Content
-
- 
-#| label: rwc-anova
-#| echo: false
-
-model.rwc1 <- lm(RWC ~ pressure + D + pressure*D, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
-model.rwc2 <- lm(RWC ~ pressure + D , data = biomass|>filter(drought=="nd",is.na(RWC)==F))
-model.rwc3 <- lm(RWC ~ pressure, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
-model.rwc4 <- lm(RWC ~ D, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
-
-anova(model.rwc3, model.rwc2, model.rwc1)
-anova(model.rwc4, model.rwc2, model.rwc1)
-
-anova(model.rwc3)
-anova(model.rwc1)
- 
-
-The *pressure* signal for relative water content is very strong, indicating that we can aggregate for pressure treatments.
-
- 
-#| label: rwc-plot
-#| echo: false
-
-
-rwc.plot <- base_plot2(biomass.comp|>filter(drought=="nd",is.na(RWC)==F), 
-                       biomass|>filter(drought=="nd",is.na(RWC)==F), 
-                       xvals = "pressure", 
-                       yvals = "RWC", 
-                       group = "pressure", 
-                       colscale = "cols2", 
-                       type = "boxplot", 
-                       y.axis = "Relative Water Content" )
-
-rwc.plot
- 
-
-At lower pressure we have a significantly lower RWC, giving us long-term image of the impact of our treatments. This is biometric support of our interpretation thus far that at low pressure *Arabidopsis thaliana* reduces stomatal conductance.
-
-There are no notable trends in the other biometric results, but they are presented in @sec-supp-biometric for your parousal.
-
-{{< pagebreak >}}
-
-# Supplementary Graphics
-
-Here we include some supplementary graphics, tables, and analyses for context.
-
-## ANOVA for Chlorophyll Fluorescence {#sec-supp-anova-psii}
-
-Above, @sec-anova, we showed that the interaction between *D* and *pressure* and the fixed effect of *D* don't increase the explanatory power of models explaining the response of chlorophyll fluorescence to our treatments using the case study of *PSII (Y)*. Below we show the ANOVA of the remaining responses tested. We see the same trend, where *D*, *pressure*, their interaction, and often even *time* don't increase the explanatory value of the models.
-
- 
-#| label: all resp pressure v D anova
-#| echo: false
-#| message: false
-#| warning: false
-
-for(response in c("NPQ1", "ETR", "qE", "qP")){
-subset.pam <- pam |>
-  filter(light == "Lss")
-
-print(paste("ANOVA for", response))
-
-model <- lm(get(response) ~ irr + pressure + D + pressure*D + time,
-                        data = subset.pam)
-model.b<-lm(get(response) ~ irr + pressure + D + time,
-                        data = subset.pam)
-model.c<-lm(get(response) ~ irr + pressure + time,
-                        data = subset.pam)
-model.d<-lm(get(response) ~ irr + pressure,
-                        data = subset.pam)
-
-#print(anova(model, model.b, model.c, model.d))
-print(anova(model))}
- 
-
-## P-values for Chlorophyll Fluorescence graphs {#sec-pvals.chlflo}
-
- 
-#| label: p-values-for-chlorophyll-fluorescence
-#| echo: false
-#| message: false
-#| warning: false
-
-knitr::kable(
-  df_pvalues.psii,
-  caption = "Pairwise p-values for PSII chlorophyll fluorescence."
-)|>
-  kable_styling(bootstrap_options = "striped")
-
-
-knitr::kable(
-  df_pvalues.npq,
-  caption = " Pairwise p-values for non-photochemical quenching (NPQ)."
-)|>
-  kable_styling(bootstrap_options = "striped")
-
-knitr::kable(
-  df_pvalues.etr,
-  caption = "Pairwise p-values for electron transport rate (ETR)."
-)|>
-  kable_styling(bootstrap_options = "striped")
-
-knitr::kable(
-  df_pvalues.qE,
-  caption = "Pairwise p-values for energy-dependent quenching (qE)."
-)|>
-  kable_styling(bootstrap_options = "striped")
-
-knitr::kable(
-  df_pvalues.qP,
-  caption = "Pairwise p-values for photochemical quenching (qP)."
-)|>
-  kable_styling(bootstrap_options = "striped")
- 
-
-## Chlorophyll Fluorescence - Unique Treatments {#sec-supp-chlotreat}
-
-### PSII(Y)
-
- 
-#| label: PSII (treatment-level)
-#| echo: false
-#| message: false
-#| warning: false
-
-pam.comp <- add_comp(pam|>filter(light == "Lss", drought == "nd"), "pressure", "D")
-
-#summarize the data by treatment/irradiance using function established at the beginning of code then fix dataframe to make a better plot
-
-# shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(QY))
-# 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(QY))$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(QY))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-#dataframe to fill
-psii.sum <- data.frame(treatment = as.character(),
-                       irr       = as.numeric()  ,
-                       N         = as.numeric()  ,
-                       QY        = as.numeric()  ,
-                       sd        = as.numeric()  ,
-                       se        = as.numeric()  ,
-                       ci        = as.numeric()  ,
-                       D         = as.numeric()  ,
-                       pressure  = as.numeric()  ,
-                       time      = as.character()
-)
-
-for(sampling_time in unique(pam$time)){
-  psii.sum <- rbind(psii.sum,
-                    summarySE(data = pam |> 
-                        filter(light=="Lss", 
-                               drought == "nd", 
-                               time == sampling_time), 
-                      "QY", 
-                      groupvars = c("treatment", "irr"))|>
-  mutate(D = substr(treatment, 4,5),
-         pressure = case_when(
-           substr(treatment, 1,2) == 26 ~ 98,
-           substr(treatment, 1,2) == 40 ~ 61
-         ),
-         time = sampling_time))
-}
-
-#clean it up to make it more palatable + graphable
-psii.sum.comp<- add_comp(psii.sum, "pressure", "D")
-
-##calculate stat signif
-
-
-#lets see what is significantly different:
-df_pvalues <- signif(pam.comp, comparison_column = "treatment", variable = "QY", grouping_column = "comparison")
-
-#plot that summary!
-
-
- psii.sum.plot <- base_plot2(psii.sum.comp, psii.sum, "irr", "QY", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), x.axis = expression(Light~"["*"\u03BC"*E*"]"), type = "line", y.axis = "PSII (Y)", pvalues = df_pvalues )
-
-psii.sum.plot
- 
-
-### NPQ
-
- 
-#| label: Non-photochemical quenching (treatment-level)
-#| echo: false
-#| warning: false
-
-# shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))
-# 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-npq.sum <- data.frame(treatment = as.character(),
-                       irr       = as.numeric()  ,
-                       N         = as.numeric()  ,
-                       NPQ        = as.numeric()  ,
-                       sd        = as.numeric()  ,
-                       se        = as.numeric()  ,
-                       ci        = as.numeric()  ,
-                       D         = as.numeric()  ,
-                       pressure  = as.numeric()  ,
-                       time      = as.character()
-)
-
-for(sampling_time in unique(pam$time)){
-  npq.sum <- rbind(npq.sum,
-                    summarySE(data = pam |> 
-                        filter(light=="Lss", 
-                               drought == "nd", 
-                               time == sampling_time), 
-                      "NPQ1", 
-                      groupvars = c("treatment", "irr"))|>
-  mutate(D = substr(treatment, 4,5),
-         pressure = case_when(
-           substr(treatment, 1,2) == 26 ~ 98,
-           substr(treatment, 1,2) == 40 ~ 61
-         ),
-         time = sampling_time))
-}
-
-#clean it up to make it more palatable + graphable
-
-npq.sum.comp <- add_comp(npq.sum, "pressure", "D")
-
-#test for significance
-df_pvalues <- signif(pam.comp, "comparison", "treatment", "NPQ1") 
-
-#plot that summary!
-
-npq.sum.plot <- base_plot2(npq.sum.comp, npq.sum, "irr", "NPQ1", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), x.axis = expression(Light~"["*"\u03BC"*E*"]"), type = "line", y.axis = "NPQ", pvalues = df_pvalues )
-
-npq.sum.plot
-
- 
-
-### qE - rapid recovery of NPQ
-
- 
-#| label: qE (treatment- level)
-#| echo: false
-#| message: false
-#| warning: false
-
-# shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))
-# 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(pam|> filter(light == "Lss", drought == "nd")|>pull(NPQ1))$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-qE.sum <- data.frame(treatment = as.character(),
-                       irr       = as.numeric()  ,
-                       N         = as.numeric()  ,
-                       qE        = as.numeric()  ,
-                       sd        = as.numeric()  ,
-                       se        = as.numeric()  ,
-                       ci        = as.numeric()  ,
-                       D         = as.numeric()  ,
-                       pressure  = as.numeric()  ,
-                       time      = as.character()
-)
-
-for(sampling_time in unique(pam$time)){
-  qE.sum <- rbind(qE.sum,
-                    summarySE(data = pam |> 
-                        filter(light=="Lss", 
-                               drought == "nd", 
-                               time == sampling_time), 
-                      "qE", 
-                      groupvars = c("treatment", "irr"))|>
-  mutate(D = substr(treatment, 4,5),
-         pressure = case_when(
-           substr(treatment, 1,2) == 26 ~ 98,
-           substr(treatment, 1,2) == 40 ~ 61
-         ),
-         time = sampling_time))
-}
-
-#clean it up to make it more palatable + graphable
-
-qE.sum.comp <- add_comp(qE.sum, "pressure", "D")
-
-#test for significance
-df_pvalues <- signif(pam.comp, "comparison", "treatment", "qE") 
-
-#plot that summary!
-
-qE.sum.plot <- base_plot2(qE.sum.comp, qE.sum, "irr", "qE", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), x.axis = expression(Light~"["*"\u03BC"*E*"]"), type = "line", y.axis = "qE", pvalues = df_pvalues )
-
-qE.sum.plot
- 
-
-### qP - open PSII reaction centers
-
- 
-#| label: qP (treatment- level)
-#| echo: false
-#| message: false
-#| warning: false
-
-qP.sum <- data.frame(treatment = as.character(),
-                       irr       = as.numeric()  ,
-                       N         = as.numeric()  ,
-                       qP        = as.numeric()  ,
-                       sd        = as.numeric()  ,
-                       se        = as.numeric()  ,
-                       ci        = as.numeric()  ,
-                       D         = as.numeric()  ,
-                       pressure  = as.numeric()  ,
-                       time      = as.character()
-)
-
-for(sampling_time in unique(pam$time)){
-  qP.sum <- rbind(qP.sum,
-                    summarySE(data = pam |> 
-                        filter(light=="Lss", 
-                               drought == "nd", 
-                               time == sampling_time), 
-                      "qP", 
-                      groupvars = c("treatment", "irr"))|>
-  mutate(D = substr(treatment, 4,5),
-         pressure = case_when(
-           substr(treatment, 1,2) == 26 ~ 98,
-           substr(treatment, 1,2) == 40 ~ 61
-         ),
-         time = sampling_time))
-}
-
-#clean it up to make it more palatable + graphable
-
-qP.sum <- qP.sum |> 
-  dplyr::mutate(qP = case_when(
-    qP != 0 ~ 1-qP,
-    TRUE ~ qP
-  ))
-
-
-qP.sum.comp <- add_comp(qP.sum, "pressure", "D")
-
-#test for significance
-df_pvalues <- signif(pam.comp, "comparison", "treatment", "qP") 
-
-#plot that summary!
-
-qP.sum.plot <- base_plot2(qP.sum.comp, qP.sum, "irr", "qP", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), x.axis = expression(Light~"["*"\u03BC"*E*"]"), type = "line", y.axis = "qP", pvalues = df_pvalues )
-
-qP.sum.plot
- 
-
-### ETR
-
- 
-#| label: ETR (treatment-level)
-#| echo: false
-#| warning: false
-
-etr.sum <- data.frame(treatment = as.character(),
-                       irr       = as.numeric()  ,
-                       N         = as.numeric()  ,
-                       ETR        = as.numeric()  ,
-                       sd        = as.numeric()  ,
-                       se        = as.numeric()  ,
-                       ci        = as.numeric()  ,
-                       D         = as.numeric()  ,
-                       pressure  = as.numeric()  ,
-                       time      = as.character()
-)
-
-for(sampling_time in unique(pam$time)){
-  etr.sum <- rbind(etr.sum,
-                    summarySE(data = pam |> 
-                        filter(light=="Lss", 
-                               drought == "nd", 
-                               time == sampling_time), 
-                      "ETR", 
-                      groupvars = c("treatment", "irr"))|>
-  mutate(D = substr(treatment, 4,5),
-         pressure = case_when(
-           substr(treatment, 1,2) == 26 ~ 98,
-           substr(treatment, 1,2) == 40 ~ 61
-         ),
-         time = sampling_time))
-}
-
-#clean it up to make it more palatable + graphable
-
-etr.sum.comp <- add_comp(etr.sum, "pressure", "D")
-
-#test for significance
-df_pvalues <- signif(pam.comp, "comparison", "treatment", "ETR") 
-
-#plot that summary!
-
-etr.sum.plot <- base_plot2(etr.sum.comp, etr.sum, "irr", "ETR", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), x.axis = expression(Light~"["*"\u03BC"*E*"]"), type = "line", y.axis = "ETR", pvalues = df_pvalues )
-
-etr.sum.plot
- 
-
-## Chlorophyll Fluorescence - Time-resolution data {#sec-supp-chlotemp}
-
-### PSII
-
-![Quantum yield of PSII at a temporal scale across 5 light intensities, colors and symbols indicate treatments, light intensity \[𝜇E\] in each legend. Measurements taken halfway through the experiment- T1.](images/YII_T1_time.png){fig-align="center"}
-
-![Quantum yield of PSII at T2. All other information same as Figure above.](images/YII_T2_time.png){fig-align="center"}
-
-### NPQ
-
-![Non-photochemical quenching at T1 across different light intensities (see legend of each graph).](images/NPQ_T1_time.png){fig-align="center"}
-
-![Non-photochemical quenching at T2.](images/NPQ_T2_time.png){fig-align="center"}
-
-### ETR
-
-![Electron transport rate at T1.](images/ETR_T1_time.png)
-
-![Electron transport rate at T2.](images/ETR_T2_time.png)
-
-### qP
-
-![Photochemical quenching at T1.](images/qP_T1_time.png)
-
-![Photochemical quenching at T2.](images/qP_T2_time.png)
-
-Figures in this subsection (\@sec-supp-chlotemp) courtesy of S. Cazzaniga.
-
-## Leaf temperature {#sec-leaftemp}
-
-The measurements shown in @sec-photosynthesis are temperature dependent. Here we show the leaf temperature data during the measurements.
-
- 
-#| label: leaf-temp
-
-#test for normality
-invisible(shapiro.test(walz$Tleaf) )
-#p-value = 0.052, so the data is (barely) normally distributed and we can use
-#parametric tests for our statistics
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$Tleaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-#base facet plot
-
-tleaf.plot <- walz|>
-  ggplot(aes(x = treatment, y = Tleaf, fill = treatment))+
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(x = NULL,
-       y = "Temperature [°C]")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(comparisons = my.comps,
-                     label = "p.signif",
-                     method = method2,
-                     label.y = c(24.9, 24.9, 25,25.07),
-                     paired = F
-  )+
-  stat_compare_means(label.y = 24.6,
-                     label.x.npc = "middle")+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-tleaf.plot
- 
-
-## Photosynthesis
-
- 
-#| label: photosynthesis data cleaning
-#| include: false
-
-#### Data cleaning
-
-#working through to improve faceting
-#modifying dataframe for easier faceting
-
-walz.comp <- add_comp(walz, "pressure", "D")
-
- 
-
-### Anovas and Residual Plots for lms {#sec-supp-photanova}
-
- 
-#| warning: false
-#| fig-cap: "Autoplot for model: A ~ pressure * D. Normal Q-Q plots for remaining variables not shown, for space, but exhibit the same trend (consistent with a normal distribution of residuals, and thus supporting our use of linear models to model our data)."
-autoplot(assim.model.c) # we can use these models *normal q-q along the normality line
- 
-
- 
-#| label: sup-phot-anova
-#| echo: false
-#| message: false
-#| warning: false
-
-for(response in c("cica", "E", "GH2O")){
-
-  cat(paste("\n ANOVA for", response," \n \n"))
-
-model.c <- lm(get(response) ~ pressure + D + pressure*D,
-                        data = walz)
-model.b <- lm(get(response) ~ pressure + D,
-                        data = walz)
-model.a <- lm(get (response) ~ pressure,
-                    data = walz)
-print(anova(model.a, model.b, model.c))
-
-print(autoplot(model.c)) # just a check that a gaussian model is correct for this 
-
-print(anova(model.c)) # if we want to look more closely
-}
- 
-
-### Plots - Treatment-level {#sec-phottreatment}
-
- 
-#| label: Assimilation Rate
-#| eval: true
-#| warning: false
-#| fig-cap: "Carbon assimilation rate [mmol m$^{-1}$s$^{-1}$] by treatment, comparing across pressures and humidities. Significance label of the comparison above each facet, p-value below, and number of replicates (n) below each highlighted boxplot."
-
-#check for normality
-invisible(shapiro.test(walz$A) )
-#p-value = 3324, so the data is normally distributed and we can use parametric 
-#tests for our statistics
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$A)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$A)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-A.plot<- 
-  walz.comp |>
-    filter(Drought==F,is.na(A)==F)|>
-  ggplot(aes(x = treatment, y = A, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(A)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Assimilation Rate",
-       x = NULL,
-       y = expression(A~"["*"\u03BC"*mol~m^-1~s^-1*"]"))+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-    theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final plot
-A.plot
-
- 
-
- 
-#| label: Gs
-#| eval: true
-#| warning: false
-#| fig-cap: "Stomatal conductance [mmol m$^{-1}$s$^{-1}$] by treatment, comparing across pressures and humidities. Significance label of the comparison above each facet, p-value below, and number of replicates (n) below each highlighted boxplot."
-
-#check for normality
-invisible(shapiro.test(walz$GH2O) )
-#p-value << 0.05, so the data is not normally distributed and we can't use 
-#parametric tests for our statistics
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$GH2O)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-gh2o.plot<- 
-  walz.comp |>
-  filter(Drought==F,is.na(GH2O)==F)|>
-  ggplot(aes(x = treatment, y = GH2O, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(GH2O)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Gas Exchange",
-       x = NULL,
-       y = expression(G[s]~"["*mmol~H[2]*O~m^-2~s^-1*"]"))+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-#final plot
-gh2o.plot
-
-
- 
-
- 
-#| label: T
-#| eval: true
-#| warning: false
-#| fig-cap: "Transpiration rate [mmol m$^{-1}$s$^{-1}$] by treatment, comparing across pressures and humidities. Significance label of the comparison above each facet, p-value below, and number of replicates (n) below each highlighted boxplot."
-
-invisible(shapiro.test(walz$E) )
-#p-value <<0.05, so the data is not normally distributed and we can't use 
-#parametric tests for our statistics. We'll use the wilcox test.
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$E)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$E)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-e.plot<- 
-  walz.comp |>
-  filter(Drought==F,is.na(E)==F)|>
-  ggplot(aes(x = treatment, y = E, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(E)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_below, geom = "text", vjust = 1.15)+
-  labs(title = "Transpiration",
-       x = NULL,
-       y = expression(T~"["*mmol~m^-2~s^-1*"]"))+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom") +
-  coord_cartesian(clip = "off")
-
-
-
-#final leaf height plot
-e.plot
-
- 
-
- 
-#| label: Ci:Ca
-#| eval: true
-#| warning: false
-#| fig-cap: "Ci:Ca by treatment, comparing across pressures and humidities. Significance label of the comparison above each facet, p-value below, and number of replicates (n) below each highlighted boxplot."
-# 
-# #test for normality
-# shapiro.test(walz$cica) 
-# #p-value = 4.594e-07, so the data is not normally distributed and we can't use 
-# #parametric tests for our statistics - so we will compare our data with the
-# #wilcox test (`method3`) rather than a t-test.
-# 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(walz$cica)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(walz$cica)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-cica.plot<- 
-  walz.comp |>
-  filter(Drought==F,is.na(cica)==F)|>
-  ggplot(aes(x = treatment, y = cica, fill = treatment))+
-  geom_boxplot(data = walz|> filter(Drought==F, is.na(cica)==F), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  stat_summary(fun.data = n_fun_bottwisk, geom = "text")+
-  labs(title = "Internal to ambient carbon concentration",
-       x = NULL,
-       y = "Ci:Ca")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method2, 
-                     label = "p.signif",
-                     #label.y = 3.05,
-                     label.x.npc = c(0.7, 0.25, 0.2, 0.9)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 3.1)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-cica.plot
-
- 
-
-## Pigments {#sec-supp-pig}
-
-### General ANOVAs for Pigments {#sec-chloanova}
-
- 
-#| label: chlo-anova
-#| echo: false
-#| message: false
-#| warning: false
+### Sensitivity to treatment components ----
 
 for(response in c("chlab", "chlcar", "density")){
   
@@ -1722,249 +766,297 @@ for(response in c("chlab", "chlcar", "density")){
   print(anova(model.t, model.a, model.b, model.c))
   print(anova(model.t, model.a2, model.b, model.c))
   
-  print(autoplot(model.c)) # just a check that a gaussian model is correct for this
+  #print(autoplot(model.c)) # just a check that a gaussian model is correct for this
   
   #print(anova(model.c)) # if we want to look more closely
 }
+
+# There is no statistical evidence of an interaction between *pressure* and *D*, so we can drop all models which include *pressure * D*.
+
+#clean up
+rm(model.t, model.a, model.a2, model.b, model.c)
+
+### Chlorophyll A:B ratio ----
+
+#run models to compare sensitivity to treatment elements
+model.chlab1 <- lm(chlab ~ pressure + time,
+                        data = pigments)
+model.chlab2 <- lm(chlab ~ pressure + D + time,
+                        data = pigments)
+
+anova(model.chlab1, model.chlab2)
+
+model.chlab3 <- lm(chlab ~ pressure*time,
+                   data = pigments)
+
+anova(model.chlab1, model.chlab3)
+anova(model.chlab3)
+
+
+# The chlorophyll A:B ratio seems to be influenced mostly by pressure with a slight, but non significant effect of the interaction of *time*. This seems to indicate that for this variable we could aggregate pressure treatments and time, but returning to our "pseudoreplication" issue, we will maintain our two sampling times separate.
+
+#plot it 
+ plot_treatment_comparison(pigments,
+           xvals = "pressure", yvals = "chlab", 
+           group = "pressure", 
+           colscale = "cols2", 
+           type = "boxplot", 
+           y.axis = "Chlorophyll A:B Ratio")
+
+#clean up
+rm(model.chlab1, model.chlab2, model.chlab3) 
+
+#A:B is usually used as an indicator of light availability, with shade-acclimated leaves often showing a lower ratio due to a larger investment in light-harvesting complexes. It can also be interpreted as an attempt to maximize light capture. In our scenario, this seems to indicate that at lower pressure, *Arabidopsis* plants are investing more in light harvesting than processing machinery - a potential response to the increased efficiency of the photosynthetic apparatus.
+
+### Chlorophyll:carotenoid ratio ----
+
+#run models to compare sensitivity to treatment elements
+model.chlcar1 <- lm(chlcar ~ D + time,
+                        data = pigments)
+model.chlcar2 <- lm(chlcar ~ pressure + D + time,
+                        data = pigments)
+
+anova(model.chlcar1, model.chlcar2)
+
+model.chlcar3 <- lm(chlcar ~ D*time,
+                   data = pigments)
+
+anova(model.chlcar1, model.chlcar3)
+anova(model.chlcar1)
+
+
+#We have a different effect - *pressure* no longer seems to play a role, and rather we have a strong effect of *D* and a minimal effect of *time*, though their interaction does not have a statistically significant impact. It could be interesting to delve into this temporal trend. To do so, let's look at a temporal comparison based on treatments.
+
+ggplot(pigments, aes(x= treatment, y = chlcar, fill = time))+
+  geom_boxplot()+
+  stat_compare_means(label = "p.signif")+
+  labs(y = "Chlorophyll : Carotenoid",
+       x = NULL,
+       fill = NULL)+
+  theme_bw()
+
+#Cool! There's a statistically significant decrease in the ratio at low pressure with time. This could indicate a decrease in stress response as carotenoids are photoprotective pigments and can indicate an investment in stress tolerance. To confirm this interpretation, we have to look at the chlorophyll density trends:
+
+#clean up
+rm(model.chlcar1, model.chlcar2, model.chlcar3)
  
+### Chlorophyll density ----
+
+#run models to compare sensitivity to treatment elements
+model.chlden1 <- lm(density ~ D + time,
+                        data = pigments)
+model.chlden2 <- lm(density ~ pressure + D + time,
+                        data = pigments)
+
+anova(model.chlden1, model.chlden2)
+
+model.chlden3 <- lm(density ~ D*time,
+                   data = pigments)
+
+anova(model.chlden1, model.chlden3)
+anova(model.chlden1)
 
  
-#| label: modifying df for faceting
-#| include: false
+#The case for chlorophyll density is similar, but cleaner, with the only fixed effect having a significant impact on the variable being *D*. Time doesn't seem to have an impact. But let's double check, to understand our chlorophyll:carotenoid ratios better.
+
+
+#plot
+ggplot(pigments, aes(x= treatment, y = density, fill = time))+
+  geom_boxplot()+
+  stat_compare_means(label = "p.signif")+
+  labs(y = expression(Chlorophyll~Density~"["*"\u03BC"*g~chl~cm^-2*"]"),
+       x = NULL,
+       fill = NULL)+
+  theme_bw()
+ 
+
+#While we seem to observe a temporal trend - with an increase of chlorophyll at high pressure and a decrease at low pressure over time, it is not statistically significant. This lack of statistical significance is further supported by the anovas above, indicating that the most likely interpretation of the temporal signal in the chlorophyll:carotenoid ratio is a decrease in carotenoids. Thus a decreased stress response - since the decrease in the chlorophyll:carotenoid ratio is only observed in the low pressure treatments, this is potentially an adaptation to pressure.
+
+#clean up
+rm(model.chlden1, model.chlden2, model.chlden3)
+
+## Carbon content - C:N ratio and d13C ----
+
 #modifying dataframe for easier faceting
-
-pigments.comp <- add_comp(pigments, "pressure", "D")
-
+cn.comp <- add_comp(cn, "pressure", "D")
  
 
-### Chlorophyll A:B
+### C:N Ratio ----
 
+#run models to compare sensitivity to treatment elements
+model.cn1 <- lm(cn ~ pressure + D + pressure*D, data = cn)
+model.cn2 <- lm(cn ~ pressure + D , data = cn)
+model.cn3 <- lm(cn ~ pressure, data = cn)
+model.cn4 <- lm(cn ~ D, data = cn)
+
+anova(model.cn3, model.cn2, model.cn1)
+anova(model.cn4, model.cn2, model.cn1)
+
+#deeper look
+#anova(model.cn2)
+
+#There is no statistical evidence of an interaction between *pressure* and *D*, but in both anova model comparisons, the model including both *pressure* and *D* performs much better than the one with a single effect. The anova of the single selected model - *cn \~ pressure + D* , indicates that D has a stronger effect than pressure (F = 18, F = 7). This means we cannot aggregate for pressure treatment (or for D treatment).
+
+#check for normality
+shapiro.test(cn$cn)
+#p-value = .067, so the data is normally distributed and we can use parametric 
+#tests for our statistics
+# 
+# cat(paste("Since the p-value is", 
+#       ifelse(shapiro.test(cn$cn)$p.value > 0.05, "non-significant,", "significant,"), 
+#       "the data is", 
+#       ifelse(shapiro.test(cn$cn)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
+#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+
+ plot_treatment_comparison(cn.comp|>filter(drought=="nd",is.na(cn)==F), 
+           cn|>filter(drought=="nd",is.na(cn)==F), 
+           xvals = "treatment", yvals = "cn", 
+           group = "treatment", 
+           colscale = "cols4", 
+           facets = "comparison", 
+           type = "boxplot", 
+           y.axis = "C:N" )
  
-#| label: chlorophyll a:b
-#| echo: false
 
-chlab.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "chlab", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), type = "boxplot", y.axis = "Chlorophyll A:B Ratio" )
+#clean up
+rm(model.cn1, model.cn2, model.cn3, model.cn4)
 
-chlab.plot
+#There seems to be a modulating signal of *D* on the effect of *pressure* on cn (also observed below in the d13C). Generally, we observe an increase in C:N with a decrease in pressure an increase in D. This signal is significant only in the more stressed plants (i.e. low pressure - P = 61, and high D - D = 20), but is present across all analyses.
+
+### d13C ----
+
+#run models to compare sensitivity to treatment elements
+model.d13c1 <- lm(C_discr ~ pressure + D + pressure*D, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
+model.d13c2 <- lm(C_discr ~ pressure + D , data = cn|>filter(drought=="nd",is.na(C_discr)==F))
+model.d13c3 <- lm(C_discr ~ pressure, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
+model.d13c4 <- lm(C_discr ~ D, data = cn|>filter(drought=="nd",is.na(C_discr)==F))
+
+anova(model.d13c3, model.d13c2, model.d13c1)
+anova(model.d13c4, model.d13c2, model.d13c1)
+
+anova(model.d13c1)
  
 
-### Chlorophyll : Carotenoid
+#*Pressure*, *D*, and their interaction have strong effects on $\delta^{13}C$. We sadly then cannot aggregate by either *pressure* or *D*, but can take a look at the interaction term as well as a closer look at how each effect impacted d13C .
 
- 
-#| label: chlor:car
-#| echo: false
 
-chlcar.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "chlcar", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), type = "boxplot", y.axis = "Chlorophyll : Carotenoid Ratio" )
+#check for normality
+shapiro.test(abs(cn$C_discr))
+#p-value = 2.841e-05, so the data is not normally distributed and we cannot use parametric tests for our statistics
 
-chlcar.plot
- 
 
-### Chlorophyll Density
+ plot_treatment_comparison(cn.comp|>filter(drought=="nd",is.na(cn)==F), 
+                        cn|>filter(drought=="nd",is.na(cn)==F), 
+                        xvals = "treatment", yvals = "C_discr", 
+                        group = "treatment", 
+                        colscale = "cols4",
+                        facets = "comparison",
+                        type = "boxplot",
+                        y.axis = expression(delta^{13}*C) )
 
- 
-#| label: chl density
-#| echo: false
+#modifying cn for the function:
 
-chlarea.plot <- base_plot2(pigments.comp, pigments, xvals = "treatment", yvals = "density", group = "treatment", colscale = "cols4", facets = c("time", "comparison"), type = "boxplot", y.axis = expression("Chlorophyll Density (\u03BCg chl cm"^-2*")") )
+ cn_mod <- cn|>
+   filter(drought=="nd",
+          is.na(C_discr)==F)|>
+   mutate(pressure_n = as.numeric(as.character(pressure)),
+          D_f = factor(D, levels = c("10", "20")))
 
-chlarea.plot
- 
+model.d13c1 <- lm(C_discr ~ pressure_n*D_f, data = cn_mod) #keep for plotting later
 
-## Biometric Data {#sec-supp-biometric}
+plot_interaction_ci(
+  data = cn_mod,
+  model = model.d13c1,
+  y_var = "C_discr",
+  x_var = "pressure_n",
+  group_var = "D_f",
+  y_label = expression(delta^{13}*C),
+  x_label = "Pressure [kPa]",
+  legend = "D",
+  colscale = "cols2a"
+)
 
- 
-#| include: false
+#clean up
+rm(model.d13c2, model.d13c3, model.d13c4)
+
+## Biometric Data ----
+
 #modifying dataframe for easier faceting
 
 biomass.comp <- add_comp(biomass, "pressure", "D")
 
 biometric.comp <- add_comp(biometric, "pressure", "D")
- 
 
- 
-#| label: dry biomass
-
+### Biomass ----
 
 #test for normality
-invisible(shapiro.test(biomass$dryweight) )
-#p-value = 0.003224,  so the data is not normally distributed and we must use
-#non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
+shapiro.test(biomass$dryweight)
+#p-value = 0.003224,  so the data is not normally distributed and we must use non parametric tests for our comparisons (i.e. Wilcox i.e. `method 3`)
 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(biomass$dryweight)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-biomass.plot<- 
-  biomass.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = dryweight, fill = treatment))+
-  geom_boxplot(data = biomass|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Aboveground Dry Biomass",
-       x = NULL,
-       y = "Dry Mass [g]")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 1.2,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(NA, 1.3)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
+biomass.plot<- plot_treatment_comparison(biomass.comp |> filter(drought=="nd", !is.na(dryweight)),
+                                         biomass |> filter(drought=="nd", !is.na(dryweight)),
+                                         xvals = "treatment", yvals = "dryweight",
+                                         group = "treatment",
+                                         colscale = "cols4",
+                                         facets = "comparison",
+                                         type = "boxplot",
+                                         y.axis = "Aboveground dry biomass [g]")
 
 biomass.plot
 
+biomass.model <- lm(dryweight~ pressure * D, data = biomass)
+#anova(biomass.model)
+
+#clean up
+rm(biomass.plot)
+
+### Relative Water Content ----
+
+#run models to compare sensitivity to treatment elements
+model.rwc1 <- lm(RWC ~ pressure + D + pressure*D, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
+model.rwc2 <- lm(RWC ~ pressure + D , data = biomass|>filter(drought=="nd",is.na(RWC)==F))
+model.rwc3 <- lm(RWC ~ pressure, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
+model.rwc4 <- lm(RWC ~ D, data = biomass|>filter(drought=="nd",is.na(RWC)==F))
+
+anova(model.rwc3, model.rwc2, model.rwc1)
+anova(model.rwc4, model.rwc2, model.rwc1)
+
+anova(model.rwc3)
+anova(model.rwc1)
  
 
- 
-#| label: Leaf number
+# The *pressure* signal for relative water content is very strong, indicating that we can aggregate for pressure treatments.
+
+ plot_treatment_comparison(biomass.comp|>filter(drought=="nd",is.na(RWC)==F), 
+                       biomass|>filter(drought=="nd",is.na(RWC)==F), 
+                       xvals = "pressure", 
+                       yvals = "RWC", 
+                       group = "pressure", 
+                       colscale = "cols2", 
+                       type = "boxplot", 
+                       y.axis = "Relative Water Content" )
 
 
-#check for normality in plant height data
-invisible(shapiro.test(biometric$LeafNum) )
-#p-value << 0,05, non normal - need to do parametric test
+#At lower pressure we have a significantly lower RWC, giving us long-term image of the impact of our treatments. This is biometric support of our interpretation thus far that at low pressure *Arabidopsis thaliana* reduces stomatal conductance.
 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(biometric$LeafNum)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+#clean up
+rm(model.rwc1, model.rwc2, model.rwc3, model.rwc4)
 
-leafnum.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = LeafNum, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Number of leaves per rosette",
-       x = NULL,
-       y = "Leaf Number")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
+### Leaf difference ----
 
-#final leaf height plot
-leafnum.plot
-
- 
-
- 
-#| label: live leaf number
-#| echo: false
-
-#check for normality in plant height data
-invisible(shapiro.test(biometric$LiveLeaf) )
-#p-value << 0,05, non normal - need to do parametric test
-
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(biometric$LiveLeaf)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
-
-liveleaf.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = LiveLeaf, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Number of live leaves per rosette",
-       x = NULL,
-       y = "Leaf Number")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-liveleaf.plot
- 
-
- 
-#| label: delta leaves
-
-#looking at the *change* in leaf number over time
-leaf.diff <- biometric.comp %>%
-  filter(drought != "d") %>% 
+#looking at the *change* in leaf number over time with comparison columns
+leaf.diff.comp <- biometric.comp  |> 
+  filter(drought != "d")  |>  
   reframe(.by=c(time, ID, comparison), 
           mean = mean(LeafNum), 
-          treatment = treatment) %>% 
-  unique() %>% 
-  pivot_wider(values_from = mean, names_from = time) %>% 
-  mutate(diff = T2-T1) %>% 
+          treatment = treatment) |> 
+  unique() |> 
+  pivot_wider(values_from = mean, names_from = time)  |>  
+  mutate(diff = T2-T1)  |>  
   filter(is.na(diff)==F)
 
-#is it normally distributed?
-invisible(shapiro.test(leaf.diff$diff))
-#p-value <<< 0.05, non normal - non parametric tests here we come
-
-leafdiff.plot<- 
-  leaf.diff |>
-  ggplot(aes(x = treatment, y = diff, fill = treatment))+
-  geom_boxplot(data = leaf.diff|> dplyr::select(-comparison)|>unique(), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Change in leaves per rosette",
-       x = NULL,
-       y = "Number of Leaves")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     label.y = 5,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(~comparison, drop = TRUE)+
-  #ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
-
-leafdiff.plot
-
-
-leaf.diff2 <- biometric |>
+#looking at the raw *change* in leaf number
+leaf.diff <- biometric |>
   filter(drought != "d") |> 
   reframe(.by=c(time, ID, pressure, D), 
           mean = mean(LeafNum), 
@@ -1973,50 +1065,39 @@ leaf.diff2 <- biometric |>
   mutate(diff = T2-T1) |> 
   filter(is.na(diff)==F)
 
-leaf.diff.model <- lm(diff ~ pressure * D, data = leaf.diff2)
-anova(leaf.diff.model)
- 
 
- 
-#| label: Rosette Diameter
+#is it normally distributed?
+shapiro.test(leaf.diff$diff)
+#p-value <<< 0.05, non normal - non parametric tests here we come
 
+#plot
+leaf.diff.plot <- plot_treatment_comparison(df = leaf.diff.comp,
+                                                 comp = leaf.diff,
+                                                 xvals = "treatment",  yvals= "diff",
+                                                 group = "treatment",
+                                                 colscale = "cols4",
+                                                 facets = "comparison",
+                                                 title = "Change in leaves per rosette",
+                                                 x.axis = NULL, y.axis = "Number of Leaves",
+                                                 type = "boxplot")
 
-#check for normality in plant height data
-invisible(shapiro.test(biometric$diameter) )
-#p-value << 0,05, non normal - need to do parametric test
+leaf.diff.plot
 
-# cat(paste("Since the p-value is", 
-#       ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "non-significant,", "significant,"), 
-#       "the data is", 
-#       ifelse(shapiro.test(biometric$diameter)$p.value > 0.05, "normally distributed \n and we will use t-test for comparison going forward.", 
-#              "non-normally distributed \n and we will use the Wilcox test for comparison going forward.")))
+#clean up
+rm(leaf.diff.plot, leaf.diff.comp)
 
-diam.plot<- 
-  biometric.comp |>
-  dplyr::filter(drought == "nd")|>
-  ggplot(aes(x = treatment, y = diameter, fill = treatment))+
-  geom_boxplot(data = biometric|> filter(drought == "nd"), color = "grey",fill = "grey")+ 
-  geom_boxplot()+
-  geom_jitter(width=0.01)+
-  labs(title = "Rosette Diameter",
-       x = NULL,
-       y = "Diameter [mm]")+
-  scale_fill_manual(values= cols4)+
-  stat_compare_means(method = method3, 
-                     label = "p.signif",
-                     #label.y = 22,
-                     label.x.npc = c(0.3, 0.2, 0.75, 0.6)
-  )+
-  stat_compare_means(method = method3, 
-                     label = "p.format",
-                     label.y.npc = "bottom"
-  )+
-  facet_grid(time~comparison, drop = TRUE)+
-  #ylim(0, 25)+
-  theme_bw( )+
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(), 
-        legend.position = "bottom")
+#model to understand sensitivity to treatments
+leaf.diff.model <- lm(diff ~ pressure * D, data = leaf.diff)
 
-diam.plot
- 
+#NOT RUN - but show that above model is the one with the best fit
+# leaf.diff.model1 <- lm(diff~ pressure, data = leaf.diff)
+# leaf.diff.model2 <- lm(diff ~ D, data = leaf.diff)
+# leaf.diff.model3 <- lm(diff~ pressure + D, data = leaf.diff)
+# 
+# anova(leaf.diff.model, leaf.diff.model1)
+# anova(leaf.diff.model, leaf.diff.model2, leaf.diff.model3)
+#
+#clean up
+# rm(leaf.diff.model1, leaf.diff.model2, leaf.diff.model3)
+
+#------------- END ---------------------
