@@ -263,11 +263,17 @@ plot_treatment_comparison <- function(df,
       )
     
     if (!is.null(group)) {
+      if(group == "pressure"){
       plot <- plot +
         scale_color_manual(
           values = colscale,
-          name = group
+          if(group == "pressure"){
+          name = "pressure [kPa]"} else{
+            name = group
+          }
         )
+        
+      }
     }
   }
   

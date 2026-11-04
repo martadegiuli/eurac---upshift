@@ -61,8 +61,8 @@ biomass <- read_csv("data/biomass.csv") |>
   mutate(treatment = substr(ID, 1, 5),
          D         = substr(ID, 4, 5),
          pressure  = case_when(
-           substr(ID, 1, 2) == 26 ~ factor("98", levels = c("61","98")),
-           substr(ID, 1, 2) == 40 ~ factor("61", levels = c("61","98"))),
+           substr(ID, 1, 2) == 26 ~ factor("98", levels = c("62","98")),
+           substr(ID, 1, 2) == 40 ~ factor("62", levels = c("62","98"))),
          drought   = ifelse(substr(ID, 9, 9) == "d", "d", "nd")
   )
 
@@ -71,7 +71,7 @@ biometric <- read_csv("data/biometrics.csv") |>
          D         = substr(ID, 4, 5),
          pressure  = case_when(
            substr(ID, 1, 2) == 26 ~ 98,
-           substr(ID, 1, 2) == 40 ~ 61),
+           substr(ID, 1, 2) == 40 ~ 62),
          drought   = ifelse(substr(ID, 9, 9) == "d", "d", "nd")
   )
 
@@ -84,9 +84,9 @@ walz <- read_csv ("data/gasexchange.csv")|>
          pressure = factor(
            case_when(
              Elevation == 260  ~ 98,
-             Elevation == 4000 ~ 61
+             Elevation == 4000 ~ 62
            ),
-           levels = c(98, 61)
+           levels = c(98, 62)
          )
          ,
          treatment = paste0(substr(Elevation,1,2), "D",D)
@@ -97,8 +97,8 @@ cn <- read_csv("data/cn.csv") |>
   mutate(treatment = substr(Sample_ID, 1,5),
          cn = C/N,
          pressure = case_when(
-           substr(treatment, 1, 2) == "26" ~ factor("98", levels = c("61","98")),
-           substr(treatment, 1, 2) == "40" ~ factor("61", levels = c("61","98"))),
+           substr(treatment, 1, 2) == "26" ~ factor("98", levels = c("62","98")),
+           substr(treatment, 1, 2) == "40" ~ factor("62", levels = c("62","98"))),
          D = factor(substr(treatment, 4,5), levels = c("10", "20")),
          drought = case_when(
            nchar(Sample_ID) == 9 ~ substr(Sample_ID, 9,9),
@@ -109,8 +109,8 @@ cn <- read_csv("data/cn.csv") |>
 ## Pigment data
 pigments <- read_csv("data/pigments.csv") |> 
   mutate(pressure = case_when(
-    substr(treatment, 1, 2) == "26" ~ factor("98", levels = c("61","98")),
-    substr(treatment, 1, 2) == "40" ~ factor("61", levels = c("61","98"))),
+    substr(treatment, 1, 2) == "26" ~ factor("98", levels = c("62","98")),
+    substr(treatment, 1, 2) == "40" ~ factor("62", levels = c("62","98"))),
     D = factor(substr(treatment, 4,5), levels = c("10", "20")),
     time = (substr(treatment, 7,8)),
     treatment = substr(treatment, 1,5))
@@ -122,7 +122,7 @@ beakers <- read_csv("data/beakers.csv",
   mutate(D = substr(treatment, 4, 5),
          pressure  = case_when(
            substr(treatment, 1, 2) == 26 ~ 98,
-           substr(treatment, 1, 2) == 40 ~ 61))
+           substr(treatment, 1, 2) == 40 ~ 62))
 
 
 ## PAM data
@@ -142,7 +142,7 @@ pam <- read_csv("data/pam.csv") |>
          D         = as.numeric(substr(treatment, 4, 5)),
          pressure  = case_when(
            substr(treatment, 1, 2) == 26 ~ as.factor(98),
-           substr(treatment, 1, 2) == 40 ~ as.factor(61)),
+           substr(treatment, 1, 2) == 40 ~ as.factor(62)),
          drought   = case_when(
            time == "T2" & substr(ID,3,3) == "d" ~ "d",
            .default = "nd"
@@ -161,7 +161,7 @@ cols4 <- c("26D10" = "#fde725",
            "40D20" = "#440154")
 
 cols2 <- c("98" = "#35b779", 
-           "61" = "#440154")
+           "62" = "#440154")
 
 cols2a <- c("10" = "#932667",
             "20" = "#fca50a" )
@@ -221,7 +221,7 @@ beakers.plot
 #clean up
 rm(beakers.comp)
 
-# As expected, we observe a strong statistical difference between humidities at the same pressure (panels P= 61 and P = 98), with chambers at D = 20 showing higher evaporation. Slight differences are also present between elevations at the same humidity, with chambers at lower pressure generally showing a lower evaporation rate (specifically D = 10, where we observe a significant decrease, p = 0.023). Thus we will move forward with our analyses.
+# As expected, we observe a strong statistical difference between humidities at the same pressure (panels P= 62 and P = 98), with chambers at D = 20 showing higher evaporation. Slight differences are also present between elevations at the same humidity, with chambers at lower pressure generally showing a lower evaporation rate (specifically D = 10, where we observe a significant decrease, p = 0.023). Thus we will move forward with our analyses.
 
 ## Chamber parameters ----
 # Concentration of $CO_2$ in ppm of each chamber, the data is a 30min running mean of the raw (1min resolution) data. Colors indicate treatment present in each chamber, red shaded area indicate periods when measurements were taking place (expect higher ppm $CO_2$ due to human presence), line type indicates the chamber, and red vertical bars indicate rotations of treatments between the chambers.
@@ -921,7 +921,7 @@ shapiro.test(cn$cn)
 #clean up
 rm(model.cn1, model.cn2, model.cn3, model.cn4)
 
-#There seems to be a modulating signal of *D* on the effect of *pressure* on cn (also observed below in the d13C). Generally, we observe an increase in C:N with a decrease in pressure an increase in D. This signal is significant only in the more stressed plants (i.e. low pressure - P = 61, and high D - D = 20), but is present across all analyses.
+#There seems to be a modulating signal of *D* on the effect of *pressure* on cn (also observed below in the d13C). Generally, we observe an increase in C:N with a decrease in pressure an increase in D. This signal is significant only in the more stressed plants (i.e. low pressure - P = 62, and high D - D = 20), but is present across all analyses.
 
 ### d13C ----
 
