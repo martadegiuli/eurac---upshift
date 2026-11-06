@@ -10,7 +10,7 @@
 
 This R project contains the primary code and data used to produce datasets, generate figures and tables, and conduct analyses for the *Plant Communications* manuscript entitled:
 
-**“Decoupling the Effect of Reduced Air Pressure and Humidity on Plant Physiology: an ECOTRON Experiment on *Arabidopsis thaliana*”**
+**“Decoupling the Effect of Air Pressure and Humidity on Plant Physiology: an ECOTRON Experiment on *Arabidopsis thaliana*”**
 
 The sections below describe the project’s code and data structure and provide context for the analytic workflow. Detailed explanations of individual steps are provided in comments throughout the R scripts. Some code is commented out, including code for quick exploratory assessments of the data. This code has been retained for reference but is not required to reproduce the primary outputs.
 
